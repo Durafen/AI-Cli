@@ -16,8 +16,10 @@ Usage:
     cat file.txt | ai <model>    # Stdin input
 """
 
+import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -84,6 +86,47 @@ DEFAULT_ALIASES = {
     "chimera": ("openrouter", "tngtech/deepseek-r1t2-chimera:free"),
     "devstral": ("openrouter", "mistralai/devstral-2512:free"),
     "oss": ("openrouter", "openai/gpt-oss-120b:free"),
+}
+
+# Provider CLI configurations for unified dispatch
+# prompt_mode: "stdin" = pass via stdin, "arg" = append as argument
+PROVIDER_CLI_CONFIG = {
+    "claude": {
+        "base_cmd": ["claude", "--print"],
+        "model_args": ["--model"],
+        "json_args": ["--output-format", "json"],
+        "yolo_args": ["--dangerously-skip-permissions"],
+        "prompt_mode": "stdin",
+    },
+    "codex": {
+        "base_cmd": ["codex", "exec"],
+        "model_args": ["--model"],
+        "json_args": [],  # codex doesn't support json output flag
+        "yolo_args": ["-s", "danger-full-access", "-a", "never"],
+        "prompt_mode": "arg",
+    },
+    "gemini": {
+        "base_cmd": ["gemini"],
+        "model_args": ["--model"],
+        "json_args": ["--output-format", "json"],
+        "yolo_args": ["--yolo"],
+        "prompt_mode": "arg",
+    },
+    "qwen": {
+        "base_cmd": ["qwen"],
+        "model_args": ["--model"],
+        "json_args": ["--output-format", "json"],
+        "yolo_args": ["--yolo"],
+        "prompt_mode": "arg",
+    },
+    "ollama": {
+        "base_cmd": ["ollama", "run"],
+        "model_args": [],  # model is positional for ollama
+        "json_args": ["--format", "json"],
+        "yolo_args": [],  # ollama has no yolo mode
+        "prompt_mode": "arg",
+        "extra_args": ["--hidethinking"],  # ollama-specific
+    },
 }
 
 
@@ -167,6 +210,75 @@ def get_openrouter_free_models() -> list[str]:
         ]
 
 
+def generate_ollama_aliases(models: list[str], existing: dict) -> dict:
+    """Generate short aliases for Ollama models."""
+    aliases = {}
+    if not models:
+        return aliases
+
+    # Set default ollama alias to first model
+    aliases["ollama"] = ("ollama", models[0])
+
+    for model in models:
+        short_name = model.split(":")[0]  # llama3:latest -> llama3
+        if short_name not in existing and short_name not in RESERVED_COMMANDS:
+            aliases[short_name] = ("ollama", model)
+    return aliases
+
+
+def shorten_openrouter_name(full_name: str) -> str:
+    """Shorten an OpenRouter model name by removing common suffixes and versions."""
+    name = full_name
+    # Remove common suffixes
+    for suffix in ["-instruct", "-it", "-pro", "-air", "-exp", "-mini",
+                   "-small", "-nano", "-flash", "-plus", "-chat", "-base",
+                   "-preview", "-edition", "-venice-edition"]:
+        name = name.replace(suffix, "")
+    # Remove version patterns
+    name = re.sub(r'-v\d+', '', name)  # -v2, -v3
+    name = re.sub(r'-\d+(\.\d+)?b?$', '', name)  # -24b, -3.1, -70b
+    name = re.sub(r'-\d+\.\d+-', '-', name)  # -3.1- in middle
+    name = re.sub(r'-\d+b-', '-', name)  # -24b- in middle
+    return name.strip('-') or full_name
+
+
+def generate_openrouter_aliases(models: list[str], existing: dict) -> dict:
+    """Generate short aliases for OpenRouter models, handling conflicts."""
+    aliases = {}
+    if not models:
+        return aliases
+
+    # First pass: collect candidates
+    candidates = {}  # short_name -> [models]
+    full_names = {}  # model -> full_name
+
+    for model in models:
+        if "/" not in model:
+            continue
+        full_name = model.split("/")[1].replace(":free", "")
+        full_names[model] = full_name
+        short_name = shorten_openrouter_name(full_name)
+        candidates.setdefault(short_name, []).append(model)
+
+    # Second pass: assign aliases
+    for short_name, model_list in candidates.items():
+        if len(model_list) == 1:
+            model = model_list[0]
+            full_name = full_names[model]
+            if short_name not in existing and short_name not in RESERVED_COMMANDS:
+                aliases[short_name] = ("openrouter", model)
+            elif full_name not in existing and full_name not in RESERVED_COMMANDS:
+                aliases[full_name] = ("openrouter", model)
+        else:
+            # Conflict - use full names
+            for model in model_list:
+                full_name = full_names[model]
+                if full_name not in existing and full_name not in RESERVED_COMMANDS:
+                    aliases[full_name] = ("openrouter", model)
+
+    return aliases
+
+
 def run_init():
     """Initialize: detect tools and discover models."""
     print("Initializing ai-cli...")
@@ -190,66 +302,10 @@ def run_init():
     models["openrouter"] = get_openrouter_free_models()
     print(f"  openrouter free models: {len(models['openrouter'])} found")
 
-    # Build aliases from defaults + dynamic models
+    # Build aliases
     aliases = dict(DEFAULT_ALIASES)
-
-    # Auto-generate ollama aliases
-    if "ollama" in models and models["ollama"]:
-        aliases["ollama"] = ("ollama", models["ollama"][0])
-        for model in models["ollama"]:
-            short_name = model.split(":")[0]  # llama3:latest -> llama3
-            if short_name not in aliases and short_name not in RESERVED_COMMANDS:
-                aliases[short_name] = ("ollama", model)
-
-    # Auto-generate openrouter aliases from model names (smart shortening)
-    if "openrouter" in models and models["openrouter"]:
-        # First pass: generate candidate short names for each model
-        candidates = {}  # short_name -> [list of models that want this name]
-        full_names = {}  # model -> full extracted name
-
-        for model in models["openrouter"]:
-            if "/" not in model:
-                continue
-            # Extract name: xiaomi/mimo-v2-flash:free -> mimo-v2-flash
-            full_name = model.split("/")[1].replace(":free", "")
-            full_names[model] = full_name
-
-            # Generate progressively shorter names
-            name = full_name
-            # Remove common suffixes to shorten
-            for suffix in ["-instruct", "-it", "-pro", "-air", "-exp", "-mini",
-                          "-small", "-nano", "-flash", "-plus", "-chat", "-base",
-                          "-preview", "-edition", "-venice-edition"]:
-                name = name.replace(suffix, "")
-            # Remove version patterns like -v2, -3.1, -2.5, -24b, -70b, etc.
-            import re
-            name = re.sub(r'-v\d+', '', name)  # -v2, -v3
-            name = re.sub(r'-\d+(\.\d+)?b?$', '', name)  # -24b, -3.1, -70b
-            name = re.sub(r'-\d+\.\d+-', '-', name)  # -3.1- in middle
-            name = re.sub(r'-\d+b-', '-', name)  # -24b- in middle
-            name = name.strip('-')
-
-            # Use shortened name as candidate
-            short_name = name if name else full_name
-            candidates.setdefault(short_name, []).append(model)
-
-        # Second pass: assign aliases, handle conflicts
-        for short_name, model_list in candidates.items():
-            if len(model_list) == 1:
-                # Unique among OpenRouter - but check existing aliases and reserved
-                model = model_list[0]
-                full_name = full_names[model]
-                if short_name not in aliases and short_name not in RESERVED_COMMANDS:
-                    aliases[short_name] = ("openrouter", model)
-                elif full_name not in aliases and full_name not in RESERVED_COMMANDS:
-                    # Short name taken, try full name
-                    aliases[full_name] = ("openrouter", model)
-            else:
-                # Conflict - use full names for all
-                for model in model_list:
-                    full_name = full_names[model]
-                    if full_name not in aliases and full_name not in RESERVED_COMMANDS:
-                        aliases[full_name] = ("openrouter", model)
+    aliases.update(generate_ollama_aliases(models.get("ollama", []), aliases))
+    aliases.update(generate_openrouter_aliases(models.get("openrouter", []), aliases))
 
     # Save config (preserve existing default_alias)
     old_config = load_config()
@@ -259,7 +315,6 @@ def run_init():
         "aliases": aliases,
     }
     if "default_alias" in old_config:
-        # Validate it still exists in new aliases
         if old_config["default_alias"] in aliases:
             config["default_alias"] = old_config["default_alias"]
         else:
@@ -379,98 +434,35 @@ def resolve_alias(model_arg: str, config: dict) -> tuple[str, str]:
     return (None, model_arg)
 
 
-def call_claude(model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
-    """Call claude CLI."""
-    cmd = ["claude", "--print", "--model", model]
-    if json_output:
-        cmd.extend(["--output-format", "json"])
-    if yolo:
-        cmd.append("--dangerously-skip-permissions")
+def call_cli(provider: str, model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
+    """Unified CLI caller for subprocess-based providers."""
+    cfg = PROVIDER_CLI_CONFIG[provider]
 
-    result = subprocess.run(
-        cmd,
-        input=prompt,
-        capture_output=True,
-        text=True,
-    )
+    # Build command
+    cmd = list(cfg["base_cmd"])
+    if cfg["model_args"]:
+        cmd.extend(cfg["model_args"])
+        cmd.append(model)
+    if json_output and cfg["json_args"]:
+        cmd.extend(cfg["json_args"])
+    if yolo and cfg["yolo_args"]:
+        cmd.extend(cfg["yolo_args"])
+    if cfg.get("extra_args"):
+        cmd.extend(cfg["extra_args"])
+
+    # For ollama, model is positional (after flags, before prompt)
+    if provider == "ollama":
+        cmd.append(model)
+
+    # Execute with prompt via stdin or as argument
+    if cfg["prompt_mode"] == "stdin":
+        result = subprocess.run(cmd, input=prompt, capture_output=True, text=True)
+    else:
+        cmd.append(prompt)
+        result = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
     if result.returncode != 0:
-        raise RuntimeError(f"claude error: {result.stderr}")
-    return result.stdout
-
-
-def call_codex(model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
-    """Call codex CLI."""
-    cmd = ["codex", "exec", "--model", model]
-    if yolo:
-        cmd.extend(["-s", "danger-full-access", "-a", "never"])
-    cmd.append(prompt)
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"codex error: {result.stderr}")
-    return result.stdout
-
-
-def call_gemini(model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
-    """Call gemini CLI."""
-    cmd = ["gemini", "--model", model]
-    if json_output:
-        cmd.extend(["--output-format", "json"])
-    if yolo:
-        cmd.append("--yolo")
-    cmd.append(prompt)
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"gemini error: {result.stderr}")
-    return result.stdout
-
-
-def call_qwen(model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
-    """Call qwen CLI."""
-    cmd = ["qwen", "--model", model]
-    if json_output:
-        cmd.extend(["--output-format", "json"])
-    if yolo:
-        cmd.append("--yolo")
-    cmd.append(prompt)
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"qwen error: {result.stderr}")
-    return result.stdout
-
-
-def call_ollama(model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
-    """Call ollama CLI (yolo ignored - no file editing capability)."""
-    cmd = ["ollama", "run"]
-    if json_output:
-        cmd.extend(["--format", "json"])
-    cmd.extend(["--hidethinking", model, prompt])
-
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"ollama error: {result.stderr}")
+        raise RuntimeError(f"{provider} error: {result.stderr}")
     return result.stdout
 
 
@@ -509,129 +501,130 @@ def call_openrouter(model: str, prompt: str, json_output: bool, yolo: bool = Fal
 
 def dispatch(provider: str, model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
     """Dispatch to appropriate handler."""
-    handlers = {
-        "claude": call_claude,
-        "codex": call_codex,
-        "gemini": call_gemini,
-        "qwen": call_qwen,
-        "ollama": call_ollama,
-        "openrouter": call_openrouter,
-    }
+    if provider == "openrouter":
+        return call_openrouter(model, prompt, json_output, yolo)
 
-    if provider not in handlers:
+    if provider not in PROVIDER_CLI_CONFIG:
         raise RuntimeError(f"Unknown provider: {provider}")
 
-    # Check if CLI tool exists (except openrouter which is API)
-    if provider != "openrouter" and not shutil.which(provider):
+    # Check if CLI tool exists
+    if not shutil.which(provider):
         raise RuntimeError(f"CLI tool '{provider}' not found. Run 'ai init' to check available tools.")
 
-    return handlers[provider](model, prompt, json_output, yolo)
+    return call_cli(provider, model, prompt, json_output, yolo)
 
 
-def print_usage():
-    """Print usage information."""
-    print(__doc__)
+def create_parser() -> argparse.ArgumentParser:
+    """Create the argument parser."""
+    parser = argparse.ArgumentParser(
+        prog="ai",
+        description="Unified AI CLI dispatcher",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+
+    # Output mode flags
+    parser.add_argument("--json", "-j", action="store_true", help="JSON output format")
+    parser.add_argument("--cmd", "-c", action="store_true", help="Return only terminal command")
+    parser.add_argument("--yolo", "-y", action="store_true", help="Auto-approve file edits")
+
+    # Positional args: [model] prompt...
+    parser.add_argument("args", nargs="*", metavar="[model] prompt", help="Model alias and/or prompt text")
+
+    return parser
+
+
+def normalize_args(argv: list[str]) -> list[str]:
+    """Convert legacy bare keywords to flags for backwards compat."""
+    # Map bare words to flags (must be first in remaining args to be treated as flags)
+    flag_words = {"json": "--json", "cmd": "--cmd", "yolo": "--yolo"}
+    normalized = []
+    for arg in argv:
+        if arg in flag_words:
+            normalized.append(flag_words[arg])
+        else:
+            normalized.append(arg)
+    return normalized
 
 
 def main():
-    args = sys.argv[1:]
+    argv = sys.argv[1:]
 
-    if not args:
-        # No args - check for default + stdin before showing usage
-        config = load_config()
-        default_alias = config.get("default_alias")
-        if default_alias and not sys.stdin.isatty():
-            # Will be handled below after flag parsing
-            pass
-        else:
-            print_usage()
-            sys.exit(0)
-
-    # Check for subcommands (only if args exist)
-    if args:
-        if args[0] == "init":
+    # Handle subcommands before argparse (they have different arg structures)
+    if argv:
+        if argv[0] == "init":
             run_init()
-            sys.exit(0)
-
-        if args[0] in ("list", "--list", "-l"):
+            return
+        if argv[0] in ("list", "-l"):
             show_list()
-            sys.exit(0)
+            return
+        if argv[0] == "default":
+            handle_default(argv[1:])
+            return
 
-        if args[0] == "default":
-            handle_default(args[1:])
-            sys.exit(0)
-
-        if args[0] in ("help", "--help", "-h"):
-            print_usage()
-            sys.exit(0)
-
-    # Parse flags from anywhere in args (position-independent)
-    json_output = False
-    cmd_mode = False
-    yolo_mode = False
-    remaining = []
-    for arg in args:
-        if arg in ("json", "--json"):
-            json_output = True
-        elif arg in ("cmd", "--cmd"):
-            cmd_mode = True
-        elif arg in ("yolo", "--yolo", "-y"):
-            yolo_mode = True
-        else:
-            remaining.append(arg)
-    args = remaining
-
-    # Load config early (needed to check aliases and default)
+    # Show help for no args (unless piping stdin with a default set)
     config = load_config()
-    aliases = config.get("aliases", DEFAULT_ALIASES)
+    if not argv:
+        if config.get("default_alias") and not sys.stdin.isatty():
+            pass  # Continue to handle stdin with default model
+        else:
+            create_parser().print_help()
+            return
 
-    if len(args) < 1:
-        # No args - need either default + stdin, or show usage
+    # Normalize legacy bare keywords and parse
+    parser = create_parser()
+    args = parser.parse_args(normalize_args(argv))
+
+    aliases = config.get("aliases", DEFAULT_ALIASES)
+    positionals = args.args
+
+    # Determine model and prompt
+    if not positionals:
+        # No positional args - use default + stdin
         default_alias = config.get("default_alias")
         if default_alias and not sys.stdin.isatty():
             model_arg = default_alias
             prompt = sys.stdin.read().strip()
         else:
-            print("Error: model or prompt required")
-            print_usage()
+            print("Error: model or prompt required", file=sys.stderr)
             sys.exit(1)
-    elif args[0] in aliases or ":" in args[0]:
-        # First arg is a known alias or provider:model format
-        model_arg = args[0]
-        if len(args) >= 2:
-            prompt = " ".join(args[1:])
+    elif positionals[0] in aliases or ":" in positionals[0]:
+        # First arg is a known alias or provider:model
+        model_arg = positionals[0]
+        if len(positionals) >= 2:
+            prompt = " ".join(positionals[1:])
         elif not sys.stdin.isatty():
             prompt = sys.stdin.read().strip()
         else:
-            print("Error: prompt required (as argument or via stdin)")
+            print("Error: prompt required (as argument or via stdin)", file=sys.stderr)
             sys.exit(1)
     else:
-        # First arg is not an alias - check for default
+        # First arg is not an alias - use default model if set
         default_alias = config.get("default_alias")
         if default_alias:
             model_arg = default_alias
-            # Treat all args as prompt
-            prompt = " ".join(args)
+            prompt = " ".join(positionals)
         else:
-            # No default - treat as unknown alias error
-            print(f"Error: unknown model '{args[0]}'. Run 'ai list' to see available models.")
-            print("Tip: Set a default with 'ai default <alias>' to use 'ai \"prompt\"' directly.")
+            print(f"Error: unknown model '{positionals[0]}'. Run 'ai list' to see available models.", file=sys.stderr)
+            print("Tip: Set a default with 'ai default <alias>' to use 'ai \"prompt\"' directly.", file=sys.stderr)
             sys.exit(1)
 
     provider, model = resolve_alias(model_arg, config)
-
     if provider is None:
-        print(f"Error: unknown model '{model_arg}'. Run 'ai list' to see available models.")
+        print(f"Error: unknown model '{model_arg}'. Run 'ai list' to see available models.", file=sys.stderr)
         sys.exit(1)
 
     # Wrap prompt for cmd mode
-    if cmd_mode:
-        prompt = f"Respond with ONLY a terminal command that accomplishes this task. No explanation, no markdown, no code blocks - just the raw command that can be executed directly.\n\nTask: {prompt}"
+    if args.cmd:
+        prompt = (
+            "Respond with ONLY a terminal command that accomplishes this task. "
+            "No explanation, no markdown, no code blocks - just the raw command "
+            f"that can be executed directly.\n\nTask: {prompt}"
+        )
 
     try:
-        result = dispatch(provider, model, prompt, json_output, yolo_mode)
-        # Strip whitespace in cmd mode for clean piping
-        if cmd_mode:
+        result = dispatch(provider, model, prompt, args.json, args.yolo)
+        if args.cmd:
             result = result.strip()
         print(result)
     except RuntimeError as e:
