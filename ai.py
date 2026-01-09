@@ -22,6 +22,7 @@ Usage:
 import argparse
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -132,13 +133,27 @@ PROVIDER_CLI_CONFIG = {
     },
     "ollama": {
         "base_cmd": ["ollama", "run"],
-        "model_args": [],  # model is positional for ollama
+        "model_args": [],
         "json_args": ["--format", "json"],
-        "yolo_args": [],  # ollama has no yolo mode
+        "yolo_args": [],
         "prompt_mode": "arg",
-        "extra_args": ["--hidethinking"],  # ollama-specific
+        "extra_args": ["--hidethinking"],
+        "model_positional": True,  # model comes after flags, before prompt
     },
 }
+
+
+class UnknownAliasError(Exception):
+    """Raised when a model alias cannot be resolved."""
+    pass
+
+
+def die(msg: str, hint: str = None):
+    """Print error message to stderr and exit with code 1."""
+    print(f"Error: {msg}", file=sys.stderr)
+    if hint:
+        print(f"Tip: {hint}", file=sys.stderr)
+    sys.exit(1)
 
 
 def load_config() -> dict:
@@ -189,18 +204,10 @@ def get_ollama_models() -> list[str]:
 
 
 def get_openrouter_free_models() -> list[str]:
-    """Fetch free models from OpenRouter API."""
+    """Fetch free models from OpenRouter API. Returns empty if no API key."""
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        # Return known free models as fallback
-        return [
-            "xiaomi/mimo-v2-flash:free",
-            "allenai/olmo-3.1-32b-think:free",
-            "nex-agi/deepseek-v3.1-nex-n1:free",
-            "tngtech/deepseek-r1t2-chimera:free",
-            "mistralai/devstral-2512:free",
-            "openai/gpt-oss-120b:free",
-        ]
+        return []
 
     try:
         import urllib.request
@@ -210,15 +217,9 @@ def get_openrouter_free_models() -> list[str]:
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
-            # Filter for free models (ends with :free)
             return [m["id"] for m in data.get("data", []) if m["id"].endswith(":free")]
     except Exception:
-        # Return known free models as fallback
-        return [
-            "xiaomi/mimo-v2-flash:free",
-            "allenai/olmo-3.1-32b-think:free",
-            "nex-agi/deepseek-v3.1-nex-n1:free",
-        ]
+        return []
 
 
 def generate_ollama_aliases(models: list[str], existing: dict) -> dict:
@@ -398,12 +399,10 @@ def handle_default(args: list[str]):
     if args:
         alias = args[0]
         if alias in RESERVED_COMMANDS:
-            print(f"Error: '{alias}' is a reserved command, cannot be used as default.")
-            sys.exit(1)
+            die(f"'{alias}' is a reserved command, cannot be used as default.")
         aliases = config.get("aliases", DEFAULT_ALIASES)
         if alias not in aliases:
-            print(f"Error: unknown alias '{alias}'. Run 'ai list' to see available models.")
-            sys.exit(1)
+            die(f"unknown alias '{alias}'. Run 'ai list' to see available models.")
         config["default_alias"] = alias
         save_config(config)
         provider, model = aliases[alias]
@@ -424,7 +423,7 @@ def handle_default(args: list[str]):
 
 
 def resolve_alias(model_arg: str, config: dict) -> tuple[str, str]:
-    """Resolve model argument to (provider, model)."""
+    """Resolve model argument to (provider, model). Raises UnknownAliasError if not found."""
     aliases = config.get("aliases", DEFAULT_ALIASES)
 
     # Check if it's a known alias
@@ -441,8 +440,7 @@ def resolve_alias(model_arg: str, config: dict) -> tuple[str, str]:
             return ("openrouter", model)
         return (provider, model)
 
-    # Unknown alias
-    return (None, model_arg)
+    raise UnknownAliasError(model_arg)
 
 
 def call_cli(provider: str, model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
@@ -461,8 +459,8 @@ def call_cli(provider: str, model: str, prompt: str, json_output: bool, yolo: bo
     if cfg.get("extra_args"):
         cmd.extend(cfg["extra_args"])
 
-    # For ollama, model is positional (after flags, before prompt)
-    if provider == "ollama":
+    # Some providers (e.g., ollama) need model as positional arg after flags
+    if cfg.get("model_positional"):
         cmd.append(model)
 
     # Execute with prompt via stdin or as argument
@@ -559,6 +557,21 @@ def normalize_args(argv: list[str]) -> list[str]:
     return normalized
 
 
+def sanitize_command(text: str) -> str:
+    """Strip markdown code blocks, emojis, and other non-command text."""
+    text = text.strip()
+    # Remove leading emojis first (common unicode emoji ranges)
+    while text and (text[0] > "\U0001F000" or text[0] in "🤖💡✨⚡🔥"):
+        text = text[1:].lstrip()
+    # Remove markdown code blocks
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # Remove first line (```bash or similar) and last line (```)
+        lines = [l for l in lines[1:] if not l.strip().startswith("```")]
+        text = "\n".join(lines).strip()
+    return text.strip()
+
+
 def read_keypress() -> str | None:
     """Read a single keypress without waiting for Enter. Returns key or None on error."""
     if not HAS_TERMIOS or not sys.stdin.isatty():
@@ -620,8 +633,7 @@ def main():
             model_arg = default_alias
             prompt = sys.stdin.read().strip()
         else:
-            print("Error: model or prompt required", file=sys.stderr)
-            sys.exit(1)
+            die("model or prompt required")
     elif positionals[0] in aliases or ":" in positionals[0]:
         # First arg is a known alias or provider:model
         model_arg = positionals[0]
@@ -630,8 +642,7 @@ def main():
         elif not sys.stdin.isatty():
             prompt = sys.stdin.read().strip()
         else:
-            print("Error: prompt required (as argument or via stdin)", file=sys.stderr)
-            sys.exit(1)
+            die("prompt required (as argument or via stdin)")
     else:
         # First arg is not an alias - use default model if set
         default_alias = config.get("default_alias")
@@ -639,27 +650,29 @@ def main():
             model_arg = default_alias
             prompt = " ".join(positionals)
         else:
-            print(f"Error: unknown model '{positionals[0]}'. Run 'ai list' to see available models.", file=sys.stderr)
-            print("Tip: Set a default with 'ai default <alias>' to use 'ai \"prompt\"' directly.", file=sys.stderr)
-            sys.exit(1)
+            die(f"unknown model '{positionals[0]}'. Run 'ai list' to see available models.",
+                hint="Set a default with 'ai default <alias>' to use 'ai \"prompt\"' directly.")
 
-    provider, model = resolve_alias(model_arg, config)
-    if provider is None:
-        print(f"Error: unknown model '{model_arg}'. Run 'ai list' to see available models.", file=sys.stderr)
-        sys.exit(1)
+    try:
+        provider, model = resolve_alias(model_arg, config)
+    except UnknownAliasError:
+        die(f"unknown model '{model_arg}'. Run 'ai list' to see available models.")
 
     # Wrap prompt for cmd/run mode
     if args.cmd or args.run:
+        os_name = platform.system()  # Darwin, Linux, Windows
+        shell = os.path.basename(os.environ.get("SHELL", "sh"))
         prompt = (
-            "Respond with ONLY a terminal command that accomplishes this task. "
-            "No explanation, no markdown, no code blocks - just the raw command "
-            f"that can be executed directly.\n\nTask: {prompt}"
+            f"[SYSTEM: OS={os_name}, Shell={shell}. OUTPUT MODE: Your entire response "
+            "will be piped directly to /bin/sh for execution. Return ONLY a single "
+            "shell command. Any text that is not a valid command will cause an error. "
+            f"No prose, no markdown, no explanation.]\n\n{prompt}"
         )
 
     try:
         result = dispatch(provider, model, prompt, args.json, args.yolo if not args.run else False)
         if args.cmd or args.run:
-            result = result.strip()
+            result = sanitize_command(result)
 
         if args.run:
             # Show command and confirm
@@ -691,8 +704,7 @@ def main():
         else:
             print(result)
     except RuntimeError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+        die(str(e))
     except KeyboardInterrupt:
         print("\nInterrupted", file=sys.stderr)
         sys.exit(130)
