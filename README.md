@@ -92,6 +92,23 @@ ai list
 ai init
 ```
 
+### Shell Completion
+
+Tab completion for commands and model aliases:
+
+```bash
+# Zsh
+echo 'eval "$(ai completions zsh)"' >> ~/.zshrc
+
+# Bash
+echo 'eval "$(ai completions bash)"' >> ~/.bashrc
+
+# Fish
+echo 'ai completions fish | source' >> ~/.config/fish/config.fish
+```
+
+Then `ai son<TAB>` completes to `ai sonnet`.
+
 ### Zsh users
 
 If prompts with `?`, `*`, or other special characters fail, add this to `~/.zshrc`:

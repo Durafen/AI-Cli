@@ -57,7 +57,7 @@ CONFIG_DIR = Path.home() / ".ai-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Reserved command names (cannot be used as aliases)
-RESERVED_COMMANDS = {"init", "list", "default", "cmd", "json", "help", "yolo", "run"}
+RESERVED_COMMANDS = {"init", "list", "default", "cmd", "json", "help", "yolo", "run", "completions"}
 
 # Known models per provider (from CLI /model commands)
 KNOWN_MODELS = {
@@ -422,6 +422,60 @@ def handle_default(args: list[str]):
         print("No default model set. Use 'ai default <alias>' to set one.")
 
 
+def get_completion_words() -> list[str]:
+    """Get all valid completion words (subcommands, aliases, flags)."""
+    config = load_config()
+    aliases = list(config.get("aliases", DEFAULT_ALIASES).keys())
+    subcommands = ["init", "list", "default", "completions"]
+    flags = ["--json", "--cmd", "--run", "--yolo", "-j", "-c", "-r", "-y"]
+    return sorted(set(subcommands + aliases + flags))
+
+
+def generate_completion_script(shell: str) -> str:
+    """Generate shell completion script."""
+    if shell == "bash":
+        return '''# ai-cli bash completion
+# Add to ~/.bashrc: eval "$(ai completions bash)"
+_ai_completions() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local words
+    words=$(ai --completions 2>/dev/null)
+    COMPREPLY=($(compgen -W "$words" -- "$cur"))
+}
+complete -F _ai_completions ai'''
+
+    elif shell == "zsh":
+        return '''# ai-cli zsh completion
+# Add to ~/.zshrc: eval "$(ai completions zsh)"
+_ai_completions() {
+    local words
+    words=(${(f)"$(ai --completions 2>/dev/null)"})
+    _describe 'ai' words
+}
+compdef _ai_completions ai'''
+
+    elif shell == "fish":
+        return '''# ai-cli fish completion
+# Add to ~/.config/fish/config.fish: ai completions fish | source
+complete -c ai -f -a "(ai --completions 2>/dev/null)"'''
+
+    else:
+        return f"Unknown shell: {shell}. Supported: bash, zsh, fish"
+
+
+def handle_completions(args: list[str]):
+    """Handle 'ai completions' subcommand."""
+    if not args:
+        print("Usage: ai completions <shell>")
+        print("Shells: bash, zsh, fish")
+        print("\nSetup:")
+        print('  bash: eval "$(ai completions bash)" >> ~/.bashrc')
+        print('  zsh:  eval "$(ai completions zsh)" >> ~/.zshrc')
+        print("  fish: ai completions fish | source")
+        return
+    print(generate_completion_script(args[0]))
+
+
 def resolve_alias(model_arg: str, config: dict) -> tuple[str, str]:
     """Resolve model argument to (provider, model). Raises UnknownAliasError if not found."""
     aliases = config.get("aliases", DEFAULT_ALIASES)
@@ -537,6 +591,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cmd", "-c", action="store_true", help="Return only terminal command")
     parser.add_argument("--run", "-r", action="store_true", help="Generate command, confirm, execute")
     parser.add_argument("--yolo", "-y", action="store_true", help="Auto-approve file edits (or skip confirm for --run)")
+    parser.add_argument("--completions", action="store_true", help=argparse.SUPPRESS)  # Hidden: output completion words
 
     # Positional args: [model] prompt...
     parser.add_argument("args", nargs="*", metavar="[model] prompt", help="Model alias and/or prompt text")
@@ -596,6 +651,12 @@ def read_keypress() -> str | None:
 def main():
     argv = sys.argv[1:]
 
+    # Handle --completions flag early (before subcommand check)
+    if "--completions" in argv:
+        for word in get_completion_words():
+            print(word)
+        return
+
     # Handle subcommands before argparse (they have different arg structures)
     if argv:
         if argv[0] == "init":
@@ -606,6 +667,9 @@ def main():
             return
         if argv[0] == "default":
             handle_default(argv[1:])
+            return
+        if argv[0] == "completions":
+            handle_completions(argv[1:])
             return
 
     # Show help for no args (unless piping stdin with a default set)
