@@ -8,6 +8,7 @@ Usage:
     ai "prompt"                  # Use default model (if set)
     ai json [model] "prompt"     # JSON output
     ai cmd [model] "prompt"      # Return only terminal command
+    ai yolo [model] "prompt"     # Auto-approve file edits
     ai init                      # Initialize (detect tools)
     ai list                      # List available models
     ai default [alias]           # Get/set default model
@@ -42,7 +43,7 @@ CONFIG_DIR = Path.home() / ".ai-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Reserved command names (cannot be used as aliases)
-RESERVED_COMMANDS = {"init", "list", "default", "cmd", "json", "help"}
+RESERVED_COMMANDS = {"init", "list", "default", "cmd", "json", "help", "yolo"}
 
 # Known models per provider (from CLI /model commands)
 KNOWN_MODELS = {
@@ -378,11 +379,13 @@ def resolve_alias(model_arg: str, config: dict) -> tuple[str, str]:
     return (None, model_arg)
 
 
-def call_claude(model: str, prompt: str, json_output: bool) -> str:
+def call_claude(model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
     """Call claude CLI."""
     cmd = ["claude", "--print", "--model", model]
     if json_output:
         cmd.extend(["--output-format", "json"])
+    if yolo:
+        cmd.append("--dangerously-skip-permissions")
 
     result = subprocess.run(
         cmd,
@@ -395,9 +398,12 @@ def call_claude(model: str, prompt: str, json_output: bool) -> str:
     return result.stdout
 
 
-def call_codex(model: str, prompt: str, json_output: bool) -> str:
+def call_codex(model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
     """Call codex CLI."""
-    cmd = ["codex", "exec", "--model", model, prompt]
+    cmd = ["codex", "exec", "--model", model]
+    if yolo:
+        cmd.extend(["-s", "danger-full-access", "-a", "never"])
+    cmd.append(prompt)
 
     result = subprocess.run(
         cmd,
@@ -410,11 +416,13 @@ def call_codex(model: str, prompt: str, json_output: bool) -> str:
     return result.stdout
 
 
-def call_gemini(model: str, prompt: str, json_output: bool) -> str:
+def call_gemini(model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
     """Call gemini CLI."""
     cmd = ["gemini", "--model", model]
     if json_output:
         cmd.extend(["--output-format", "json"])
+    if yolo:
+        cmd.append("--yolo")
     cmd.append(prompt)
 
     result = subprocess.run(
@@ -428,11 +436,13 @@ def call_gemini(model: str, prompt: str, json_output: bool) -> str:
     return result.stdout
 
 
-def call_qwen(model: str, prompt: str, json_output: bool) -> str:
+def call_qwen(model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
     """Call qwen CLI."""
     cmd = ["qwen", "--model", model]
     if json_output:
         cmd.extend(["--output-format", "json"])
+    if yolo:
+        cmd.append("--yolo")
     cmd.append(prompt)
 
     result = subprocess.run(
@@ -446,8 +456,8 @@ def call_qwen(model: str, prompt: str, json_output: bool) -> str:
     return result.stdout
 
 
-def call_ollama(model: str, prompt: str, json_output: bool) -> str:
-    """Call ollama CLI."""
+def call_ollama(model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
+    """Call ollama CLI (yolo ignored - no file editing capability)."""
     cmd = ["ollama", "run"]
     if json_output:
         cmd.extend(["--format", "json"])
@@ -464,8 +474,8 @@ def call_ollama(model: str, prompt: str, json_output: bool) -> str:
     return result.stdout
 
 
-def call_openrouter(model: str, prompt: str, json_output: bool) -> str:
-    """Call OpenRouter API (free models only)."""
+def call_openrouter(model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
+    """Call OpenRouter API (free models only, yolo ignored - API only)."""
     # Enforce free model
     if not model.endswith(":free"):
         raise RuntimeError(f"OpenRouter model must end with ':free'. Got: {model}")
@@ -497,7 +507,7 @@ def call_openrouter(model: str, prompt: str, json_output: bool) -> str:
         return data["choices"][0]["message"]["content"]
 
 
-def dispatch(provider: str, model: str, prompt: str, json_output: bool) -> str:
+def dispatch(provider: str, model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
     """Dispatch to appropriate handler."""
     handlers = {
         "claude": call_claude,
@@ -515,7 +525,7 @@ def dispatch(provider: str, model: str, prompt: str, json_output: bool) -> str:
     if provider != "openrouter" and not shutil.which(provider):
         raise RuntimeError(f"CLI tool '{provider}' not found. Run 'ai init' to check available tools.")
 
-    return handlers[provider](model, prompt, json_output)
+    return handlers[provider](model, prompt, json_output, yolo)
 
 
 def print_usage():
@@ -555,17 +565,21 @@ def main():
             print_usage()
             sys.exit(0)
 
-    # Parse json subcommand: ai json [model] "prompt"
+    # Parse flags from anywhere in args (position-independent)
     json_output = False
-    if args and args[0] in ("json", "--json"):
-        json_output = True
-        args = args[1:]
-
-    # Parse cmd subcommand: ai cmd [model] "prompt"
     cmd_mode = False
-    if args and args[0] in ("cmd", "--cmd"):
-        cmd_mode = True
-        args = args[1:]
+    yolo_mode = False
+    remaining = []
+    for arg in args:
+        if arg in ("json", "--json"):
+            json_output = True
+        elif arg in ("cmd", "--cmd"):
+            cmd_mode = True
+        elif arg in ("yolo", "--yolo", "-y"):
+            yolo_mode = True
+        else:
+            remaining.append(arg)
+    args = remaining
 
     # Load config early (needed to check aliases and default)
     config = load_config()
@@ -615,7 +629,7 @@ def main():
         prompt = f"Respond with ONLY a terminal command that accomplishes this task. No explanation, no markdown, no code blocks - just the raw command that can be executed directly.\n\nTask: {prompt}"
 
     try:
-        result = dispatch(provider, model, prompt, json_output)
+        result = dispatch(provider, model, prompt, json_output, yolo_mode)
         # Strip whitespace in cmd mode for clean piping
         if cmd_mode:
             result = result.strip()

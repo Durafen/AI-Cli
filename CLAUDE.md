@@ -32,6 +32,9 @@ ai json <alias> "prompt"
 # Get terminal command
 ai cmd "list docker containers"
 
+# YOLO mode (auto-approve file edits)
+ai yolo <alias> "refactor main.py"
+
 # Stdin input
 cat file.txt | ai <alias>
 ```
@@ -42,7 +45,7 @@ Single-file architecture (`ai.py`):
 
 1. **Config**: `~/.ai-cli/config.json` stores installed_tools, models, aliases, default_alias
 2. **Aliases**: Resolve short names → (provider, model) tuples
-3. **Reserved**: `RESERVED_COMMANDS` prevents conflicts with subcommands (init, list, default, cmd, json, help)
+3. **Reserved**: `RESERVED_COMMANDS` prevents conflicts with subcommands (init, list, default, cmd, json, help, yolo)
 4. **Dispatch**: Route to provider-specific `call_*()` functions
 5. **Handlers**: CLI tools use subprocess; OpenRouter uses urllib HTTP API
 
@@ -50,14 +53,14 @@ Key flow: `main()` → `resolve_alias()` → `dispatch()` → `call_<provider>()
 
 ## Provider Details
 
-| Provider | Handler | Notes |
-|----------|---------|-------|
-| claude | subprocess `claude --print --model` | Anthropic CLI |
-| codex | subprocess `codex exec --model` | OpenAI CLI |
-| gemini | subprocess `gemini --model` | Google CLI |
-| qwen | subprocess `qwen --model` | Alibaba CLI |
-| ollama | subprocess `ollama run` | Local models |
-| openrouter | urllib HTTP | Free models only (`:free` suffix enforced) |
+| Provider | Handler | YOLO Flag |
+|----------|---------|-----------|
+| claude | subprocess `claude --print --model` | `--dangerously-skip-permissions` |
+| codex | subprocess `codex exec --model` | `-s danger-full-access -a never` |
+| gemini | subprocess `gemini --model` | `--yolo` |
+| qwen | subprocess `qwen --model` | `--yolo` |
+| ollama | subprocess `ollama run` | (ignored) |
+| openrouter | urllib HTTP | (ignored) |
 
 ## Environment
 

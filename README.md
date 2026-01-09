@@ -30,6 +30,7 @@ ai <model> "prompt"
 - **One command** for all providers
 - **Smart aliases** - `llama-3.3` instead of `meta-llama/llama-3.3-70b-instruct:free`
 - **Auto-discovery** - `ai init` detects installed tools and fetches available models
+- **YOLO mode** - `ai yolo` auto-approves file edits across all providers
 - **Free OpenRouter models** - 31 free cloud models when you need them
 - **Stdin support** - `cat code.py | ai sonnet "review this"`
 
@@ -71,6 +72,9 @@ ai json sonnet "Return structured data"
 
 # Get terminal command
 ai cmd "list all docker containers"
+
+# YOLO mode (auto-approve file edits)
+ai yolo sonnet "refactor main.py"
 
 # Stdin for large prompts
 cat file.txt | ai haiku
