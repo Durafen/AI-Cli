@@ -33,3 +33,7 @@ debug/
 # OS
 .DS_Store
 Thumbs.db
+
+# Beads (local issue tracking)
+.beads/
+.gitattributes

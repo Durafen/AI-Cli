@@ -1,6 +1,6 @@
 # ai-cli
 
-One command for all your AI CLI tools. No API keys required.
+One command for all your AI CLI tools. No API keys required. Also usable as a Python library.
 
 ```bash
 ai sonnet "explain this code"
@@ -43,6 +43,9 @@ chmod +x ai.py
 
 # Create symlink to make 'ai' available globally
 ln -sf "/path/to/ai-cli/ai.py" /usr/local/bin/ai
+
+# Or run as a Python module (no symlink needed)
+python -m ai_cli <alias> "prompt"
 
 # Initialize (detect installed tools + fetch models)
 ai init
@@ -119,6 +122,60 @@ alias ai='noglob ai'
 
 This lets you type `ai sonnet "what's up?"` without quoting.
 
+## Library Usage
+
+Use ai-cli as a Python library in your scripts:
+
+```python
+from ai_cli import AIClient
+
+client = AIClient()
+response = client.call("sonnet", "Explain Python's GIL")
+
+# With options
+response = client.call("opus", "List 3 colors", json_mode=True)
+
+# List available models
+for alias, (provider, model) in client.list_models().items():
+    print(f"{alias} -> {provider}:{model}")
+```
+
+## HTTP Server (for JavaScript/other languages)
+
+Start a local HTTP server for cross-language access:
+
+```bash
+ai serve                      # Auto-generates auth token, prints it
+ai serve 3000                 # Custom port
+ai serve --token mytoken      # Use specific token
+AI_CLI_SERVER_TOKEN=x ai serve  # Token from env var
+ai serve --no-auth            # Disable auth (not recommended)
+```
+
+The server requires Bearer token authentication. Token priority: `--token` flag > `AI_CLI_SERVER_TOKEN` env var > auto-generated.
+
+From JavaScript:
+
+```javascript
+const TOKEN = 'your-token-here';  // printed when server starts
+
+const response = await fetch('http://localhost:8765/call', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${TOKEN}`
+  },
+  body: JSON.stringify({ alias: 'sonnet', prompt: 'Hello!' })
+});
+const { result } = await response.json();
+```
+
+Endpoints:
+- `GET /health` - Health check (no auth required)
+- `GET /models` - List available models
+- `GET /providers` - List providers
+- `POST /call` - Execute prompt (`{alias, prompt, json_mode?, yolo?}`)
+
 ## Supported Providers
 
 ### CLI Tools (no API keys)
@@ -181,8 +238,24 @@ Default model: sonnet
 1. `ai init` detects installed CLI tools and fetches available models
 2. Auto-generates short aliases from model names
 3. On each call, resolves alias → (provider, model)
-4. Dispatches to the appropriate CLI tool via subprocess
+4. Dispatches to the appropriate provider (CLI subprocess or HTTP API)
 5. Returns output
+
+### Architecture
+
+```
+ai_cli/
+├── client.py        # AIClient - library interface
+├── providers/       # Provider implementations
+│   ├── claude.py    # Claude CLI
+│   ├── codex.py     # Codex CLI
+│   ├── gemini.py    # Gemini CLI
+│   ├── qwen.py      # Qwen CLI
+│   ├── ollama.py    # Ollama CLI
+│   └── openrouter.py # OpenRouter HTTP
+├── cli.py           # CLI entry point
+└── server.py        # HTTP server
+```
 
 ## License
 
