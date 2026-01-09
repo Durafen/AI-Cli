@@ -5,9 +5,13 @@ Dispatches prompts to different AI CLI tools based on model alias.
 
 Usage:
     ai <model> "prompt"          # Basic usage
-    ai --json <model> "prompt"   # JSON output
+    ai "prompt"                  # Use default model (if set)
+    ai json [model] "prompt"     # JSON output
+    ai cmd [model] "prompt"      # Return only terminal command
     ai init                      # Initialize (detect tools)
-    ai --list                    # List available models
+    ai list                      # List available models
+    ai default [alias]           # Get/set default model
+    ai default --clear           # Remove default model
     cat file.txt | ai <model>    # Stdin input
 """
 
@@ -25,10 +29,20 @@ try:
     from dotenv import load_dotenv
     load_dotenv(SCRIPT_DIR / ".env")
 except ImportError:
-    pass  # dotenv not installed, rely on environment variables
+    # Fallback: manual .env parsing (no dependency needed)
+    env_file = SCRIPT_DIR / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, value = line.partition("=")
+                os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 CONFIG_DIR = Path.home() / ".ai-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+
+# Reserved command names (cannot be used as aliases)
+RESERVED_COMMANDS = {"init", "list", "default", "cmd", "json", "help"}
 
 # Known models per provider (from CLI /model commands)
 KNOWN_MODELS = {
@@ -183,7 +197,7 @@ def run_init():
         aliases["ollama"] = ("ollama", models["ollama"][0])
         for model in models["ollama"]:
             short_name = model.split(":")[0]  # llama3:latest -> llama3
-            if short_name not in aliases:
+            if short_name not in aliases and short_name not in RESERVED_COMMANDS:
                 aliases[short_name] = ("ollama", model)
 
     # Auto-generate openrouter aliases from model names (smart shortening)
@@ -221,27 +235,34 @@ def run_init():
         # Second pass: assign aliases, handle conflicts
         for short_name, model_list in candidates.items():
             if len(model_list) == 1:
-                # Unique among OpenRouter - but check existing aliases
+                # Unique among OpenRouter - but check existing aliases and reserved
                 model = model_list[0]
                 full_name = full_names[model]
-                if short_name not in aliases:
+                if short_name not in aliases and short_name not in RESERVED_COMMANDS:
                     aliases[short_name] = ("openrouter", model)
-                elif full_name not in aliases:
+                elif full_name not in aliases and full_name not in RESERVED_COMMANDS:
                     # Short name taken, try full name
                     aliases[full_name] = ("openrouter", model)
             else:
                 # Conflict - use full names for all
                 for model in model_list:
                     full_name = full_names[model]
-                    if full_name not in aliases:
+                    if full_name not in aliases and full_name not in RESERVED_COMMANDS:
                         aliases[full_name] = ("openrouter", model)
 
-    # Save config
+    # Save config (preserve existing default_alias)
+    old_config = load_config()
     config = {
         "installed_tools": installed,
         "models": models,
         "aliases": aliases,
     }
+    if "default_alias" in old_config:
+        # Validate it still exists in new aliases
+        if old_config["default_alias"] in aliases:
+            config["default_alias"] = old_config["default_alias"]
+        else:
+            print(f"Warning: default '{old_config['default_alias']}' no longer valid, cleared.")
     save_config(config)
     print(f"Config saved to {CONFIG_FILE}")
 
@@ -285,6 +306,54 @@ def show_list():
         print(f"\nInstalled CLI tools: {', '.join(installed)}")
     else:
         print("\nNo config found. Run 'ai init' to detect tools.")
+
+    # Show default model
+    default = config.get("default_alias")
+    if default:
+        print(f"\nDefault model: {default}")
+
+
+def handle_default(args: list[str]):
+    """Handle 'ai default' subcommand."""
+    config = load_config()
+
+    # ai default --clear
+    if args and args[0] == "--clear":
+        if "default_alias" in config:
+            del config["default_alias"]
+            save_config(config)
+            print("Default model cleared.")
+        else:
+            print("No default model set.")
+        return
+
+    # ai default <alias> - set default
+    if args:
+        alias = args[0]
+        if alias in RESERVED_COMMANDS:
+            print(f"Error: '{alias}' is a reserved command, cannot be used as default.")
+            sys.exit(1)
+        aliases = config.get("aliases", DEFAULT_ALIASES)
+        if alias not in aliases:
+            print(f"Error: unknown alias '{alias}'. Run 'ai list' to see available models.")
+            sys.exit(1)
+        config["default_alias"] = alias
+        save_config(config)
+        provider, model = aliases[alias]
+        print(f"Default model set: {alias} -> {provider}:{model}")
+        return
+
+    # ai default - show current
+    default = config.get("default_alias")
+    if default:
+        aliases = config.get("aliases", DEFAULT_ALIASES)
+        if default in aliases:
+            provider, model = aliases[default]
+            print(f"{default} -> {provider}:{model}")
+        else:
+            print(f"{default} (alias no longer valid)")
+    else:
+        print("No default model set. Use 'ai default <alias>' to set one.")
 
 
 def resolve_alias(model_arg: str, config: dict) -> tuple[str, str]:
@@ -458,56 +527,98 @@ def main():
     args = sys.argv[1:]
 
     if not args:
-        print_usage()
-        sys.exit(0)
+        # No args - check for default + stdin before showing usage
+        config = load_config()
+        default_alias = config.get("default_alias")
+        if default_alias and not sys.stdin.isatty():
+            # Will be handled below after flag parsing
+            pass
+        else:
+            print_usage()
+            sys.exit(0)
 
-    # Check for init command
-    if args[0] == "init":
-        run_init()
-        sys.exit(0)
+    # Check for subcommands (only if args exist)
+    if args:
+        if args[0] == "init":
+            run_init()
+            sys.exit(0)
 
-    # Check for --list
-    if args[0] in ("--list", "-l"):
-        show_list()
-        sys.exit(0)
+        if args[0] in ("list", "--list", "-l"):
+            show_list()
+            sys.exit(0)
 
-    # Check for --help
-    if args[0] in ("--help", "-h"):
-        print_usage()
-        sys.exit(0)
+        if args[0] == "default":
+            handle_default(args[1:])
+            sys.exit(0)
 
-    # Parse --json flag
+        if args[0] in ("help", "--help", "-h"):
+            print_usage()
+            sys.exit(0)
+
+    # Parse json subcommand: ai json [model] "prompt"
     json_output = False
-    if "--json" in args:
+    if args and args[0] in ("json", "--json"):
         json_output = True
-        args.remove("--json")
+        args = args[1:]
+
+    # Parse cmd subcommand: ai cmd [model] "prompt"
+    cmd_mode = False
+    if args and args[0] in ("cmd", "--cmd"):
+        cmd_mode = True
+        args = args[1:]
+
+    # Load config early (needed to check aliases and default)
+    config = load_config()
+    aliases = config.get("aliases", DEFAULT_ALIASES)
 
     if len(args) < 1:
-        print("Error: model required")
-        print_usage()
-        sys.exit(1)
-
-    model_arg = args[0]
-
-    # Get prompt from args or stdin
-    if len(args) >= 2:
-        prompt = " ".join(args[1:])
-    elif not sys.stdin.isatty():
-        prompt = sys.stdin.read().strip()
+        # No args - need either default + stdin, or show usage
+        default_alias = config.get("default_alias")
+        if default_alias and not sys.stdin.isatty():
+            model_arg = default_alias
+            prompt = sys.stdin.read().strip()
+        else:
+            print("Error: model or prompt required")
+            print_usage()
+            sys.exit(1)
+    elif args[0] in aliases or ":" in args[0]:
+        # First arg is a known alias or provider:model format
+        model_arg = args[0]
+        if len(args) >= 2:
+            prompt = " ".join(args[1:])
+        elif not sys.stdin.isatty():
+            prompt = sys.stdin.read().strip()
+        else:
+            print("Error: prompt required (as argument or via stdin)")
+            sys.exit(1)
     else:
-        print("Error: prompt required (as argument or via stdin)")
-        sys.exit(1)
+        # First arg is not an alias - check for default
+        default_alias = config.get("default_alias")
+        if default_alias:
+            model_arg = default_alias
+            # Treat all args as prompt
+            prompt = " ".join(args)
+        else:
+            # No default - treat as unknown alias error
+            print(f"Error: unknown model '{args[0]}'. Run 'ai list' to see available models.")
+            print("Tip: Set a default with 'ai default <alias>' to use 'ai \"prompt\"' directly.")
+            sys.exit(1)
 
-    # Load config and resolve alias
-    config = load_config()
     provider, model = resolve_alias(model_arg, config)
 
     if provider is None:
-        print(f"Error: unknown model '{model_arg}'. Run 'ai --list' to see available models.")
+        print(f"Error: unknown model '{model_arg}'. Run 'ai list' to see available models.")
         sys.exit(1)
+
+    # Wrap prompt for cmd mode
+    if cmd_mode:
+        prompt = f"Respond with ONLY a terminal command that accomplishes this task. No explanation, no markdown, no code blocks - just the raw command that can be executed directly.\n\nTask: {prompt}"
 
     try:
         result = dispatch(provider, model, prompt, json_output)
+        # Strip whitespace in cmd mode for clean piping
+        if cmd_mode:
+            result = result.strip()
         print(result)
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
