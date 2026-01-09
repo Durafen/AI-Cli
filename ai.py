@@ -6,8 +6,11 @@ Dispatches prompts to different AI CLI tools based on model alias.
 Usage:
     ai <model> "prompt"          # Basic usage
     ai "prompt"                  # Use default model (if set)
-    ai json [model] "prompt"     # JSON output
+    ai json [model] "prompt"     # JSON output (or: ai <model> json "prompt")
     ai cmd [model] "prompt"      # Return only terminal command
+    ai run [model] "prompt"      # Generate command, confirm, execute
+    ai <model> run "prompt"      # Same (flags work in any position)
+    ai run -y "prompt"           # Skip confirmation (auto-execute)
     ai yolo [model] "prompt"     # Auto-approve file edits
     ai init                      # Initialize (detect tools)
     ai list                      # List available models
@@ -24,6 +27,14 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+# For single-keypress reading (Unix only)
+try:
+    import termios
+    import tty
+    HAS_TERMIOS = True
+except ImportError:
+    HAS_TERMIOS = False
 
 # Load .env file from script directory (for API keys)
 # Note: resolve() first to follow symlinks, then get parent
@@ -45,7 +56,7 @@ CONFIG_DIR = Path.home() / ".ai-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Reserved command names (cannot be used as aliases)
-RESERVED_COMMANDS = {"init", "list", "default", "cmd", "json", "help", "yolo"}
+RESERVED_COMMANDS = {"init", "list", "default", "cmd", "json", "help", "yolo", "run"}
 
 # Known models per provider (from CLI /model commands)
 KNOWN_MODELS = {
@@ -526,7 +537,8 @@ def create_parser() -> argparse.ArgumentParser:
     # Output mode flags
     parser.add_argument("--json", "-j", action="store_true", help="JSON output format")
     parser.add_argument("--cmd", "-c", action="store_true", help="Return only terminal command")
-    parser.add_argument("--yolo", "-y", action="store_true", help="Auto-approve file edits")
+    parser.add_argument("--run", "-r", action="store_true", help="Generate command, confirm, execute")
+    parser.add_argument("--yolo", "-y", action="store_true", help="Auto-approve file edits (or skip confirm for --run)")
 
     # Positional args: [model] prompt...
     parser.add_argument("args", nargs="*", metavar="[model] prompt", help="Model alias and/or prompt text")
@@ -537,7 +549,7 @@ def create_parser() -> argparse.ArgumentParser:
 def normalize_args(argv: list[str]) -> list[str]:
     """Convert legacy bare keywords to flags for backwards compat."""
     # Map bare words to flags (must be first in remaining args to be treated as flags)
-    flag_words = {"json": "--json", "cmd": "--cmd", "yolo": "--yolo"}
+    flag_words = {"json": "--json", "cmd": "--cmd", "run": "--run", "yolo": "--yolo"}
     normalized = []
     for arg in argv:
         if arg in flag_words:
@@ -545,6 +557,27 @@ def normalize_args(argv: list[str]) -> list[str]:
         else:
             normalized.append(arg)
     return normalized
+
+
+def read_keypress() -> str | None:
+    """Read a single keypress without waiting for Enter. Returns key or None on error."""
+    if not HAS_TERMIOS or not sys.stdin.isatty():
+        return None
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+        # Handle escape sequences (arrows, ESC, etc.)
+        if ch == '\x1b':  # ESC
+            # Check if it's a longer escape sequence or just ESC
+            import select
+            if select.select([sys.stdin], [], [], 0.05)[0]:
+                sys.stdin.read(2)  # consume rest of escape sequence
+            return 'esc'
+        return ch
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 def main():
@@ -572,8 +605,9 @@ def main():
             return
 
     # Normalize legacy bare keywords and parse
+    # Use parse_intermixed_args to allow flags anywhere (e.g., "ai sonnet run prompt")
     parser = create_parser()
-    args = parser.parse_args(normalize_args(argv))
+    args = parser.parse_intermixed_args(normalize_args(argv))
 
     aliases = config.get("aliases", DEFAULT_ALIASES)
     positionals = args.args
@@ -614,8 +648,8 @@ def main():
         print(f"Error: unknown model '{model_arg}'. Run 'ai list' to see available models.", file=sys.stderr)
         sys.exit(1)
 
-    # Wrap prompt for cmd mode
-    if args.cmd:
+    # Wrap prompt for cmd/run mode
+    if args.cmd or args.run:
         prompt = (
             "Respond with ONLY a terminal command that accomplishes this task. "
             "No explanation, no markdown, no code blocks - just the raw command "
@@ -623,10 +657,39 @@ def main():
         )
 
     try:
-        result = dispatch(provider, model, prompt, args.json, args.yolo)
-        if args.cmd:
+        result = dispatch(provider, model, prompt, args.json, args.yolo if not args.run else False)
+        if args.cmd or args.run:
             result = result.strip()
-        print(result)
+
+        if args.run:
+            # Show command and confirm
+            print(f"\033[90m$ \033[0m\033[1m{result}\033[0m")
+            if not args.yolo:
+                try:
+                    print("\033[90m[Enter/Space] run, [Esc/n] cancel: \033[0m", end="", flush=True)
+                    key = read_keypress()
+                    print()  # newline after keypress
+                    if key is None:
+                        # Fallback to line input if keypress reading unavailable
+                        response = input().strip().lower()
+                        if response in ("n", "no"):
+                            print("Cancelled.")
+                            return
+                    elif key in ('esc', 'n', 'N', '\x03'):  # ESC, n, or Ctrl+C
+                        print("Cancelled.")
+                        return
+                    elif key not in ('\r', '\n', ' ', 'y', 'Y'):
+                        # Unknown key - cancel for safety
+                        print("Cancelled.")
+                        return
+                except (KeyboardInterrupt, EOFError):
+                    print("\nCancelled.")
+                    return
+            # Execute
+            exec_result = subprocess.run(result, shell=True)
+            sys.exit(exec_result.returncode)
+        else:
+            print(result)
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
