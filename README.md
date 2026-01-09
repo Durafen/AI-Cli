@@ -28,6 +28,7 @@ ai <model> "prompt"
 
 - **No API keys** - uses your existing CLI tools (Claude, Gemini, Codex, Qwen, Ollama)
 - **One command** for all providers
+- **Multi-model parallel** - `ai opus pro gpt "prompt"` runs all 3 simultaneously
 - **Smart aliases** - `llama-3.3` instead of `meta-llama/llama-3.3-70b-instruct:free`
 - **Auto-discovery** - `ai init` detects installed tools and fetches available models
 - **Run mode** - `ai run` generates a command, shows it, and executes on confirm
@@ -93,7 +94,36 @@ ai list
 
 # Re-initialize to update models
 ai init
+
+# Multi-model (parallel execution)
+ai opus pro gpt "review this code"
+ai sonnet haiku mimo "explain recursion"
 ```
+
+### Multi-Model Parallel Execution
+
+Query multiple models simultaneously and compare responses:
+
+```bash
+ai opus pro gpt "what are the pros and cons of microservices?"
+```
+
+Output:
+```
+━━━ opus (18.2s) ━━━
+[opus response]
+
+━━━ pro (12.1s) ━━━
+[pro response]
+
+━━━ gpt (15.3s) ━━━
+[gpt response]
+```
+
+- Runs all models in parallel (total time ≈ slowest model, not sum)
+- Shows timing for each response
+- Errors in one model don't affect others
+- Works with stdin: `echo "prompt" | ai opus pro gpt`
 
 ### Shell Completion
 
@@ -134,6 +164,11 @@ response = client.call("sonnet", "Explain Python's GIL")
 
 # With options
 response = client.call("opus", "List 3 colors", json_mode=True)
+
+# Multi-model parallel
+results = client.call_multi(["opus", "pro", "gpt"], "Explain X")
+for alias, response in results.items():
+    print(f"{alias}: {response}")
 
 # List available models
 for alias, (provider, model) in client.list_models().items():

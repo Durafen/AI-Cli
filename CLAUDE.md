@@ -45,6 +45,11 @@ ai serve [port]  # default: 8765
 
 # Stdin input
 cat file.txt | ai <alias>
+
+# Multi-model parallel execution
+ai opus pro gpt "review this code"     # runs all 3 in parallel
+ai sonnet haiku "explain X"            # compare responses
+echo "prompt" | ai opus pro gpt        # stdin works too
 ```
 
 ## Library Usage
@@ -61,6 +66,14 @@ response = client.call("opus", "List 3 colors", json_mode=True)
 # List available models
 for alias, (provider, model) in client.list_models().items():
     print(f"{alias} -> {provider}:{model}")
+
+# Multi-model parallel
+results = client.call_multi(["opus", "pro", "gpt"], "Explain X")
+for alias, response in results.items():
+    if isinstance(response, Exception):
+        print(f"{alias}: Error - {response}")
+    else:
+        print(f"{alias}: {response}")
 
 # Direct provider access
 from ai_cli.providers import ClaudeProvider
@@ -96,6 +109,7 @@ ai_cli/
 
 **Key flows:**
 - CLI: `ai.py` → `cli.main()` → `resolve_alias()` → `dispatch()` → `Provider.call()`
+- CLI (multi): `ai.py` → `cli.main()` → `dispatch_multi()` → `ThreadPoolExecutor` → parallel `Provider.call()`
 - Library: `AIClient.call()` → `resolve_alias()` → `Provider.call()`
 - HTTP: `server.py` → `AIClient.call()` → `Provider.call()`
 

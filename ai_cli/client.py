@@ -1,6 +1,7 @@
 """Main client interface for ai-cli library usage."""
 
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +107,39 @@ class AIClient:
         """
         provider = self._get_provider(provider_name)
         return provider.call(model, prompt, json_output=json_mode, yolo=yolo)
+
+    def call_multi(
+        self,
+        aliases: list[str],
+        prompt: str,
+        json_mode: bool = False,
+    ) -> dict[str, str | Exception]:
+        """
+        Execute a prompt on multiple models in parallel.
+
+        Args:
+            aliases: List of model aliases to query
+            prompt: The prompt to send to all models
+            json_mode: Request JSON output format
+
+        Returns:
+            Dict mapping alias to response string or Exception if failed
+        """
+        def call_one(alias: str) -> tuple[str, str | Exception]:
+            try:
+                return (alias, self.call(alias, prompt, json_mode=json_mode))
+            except Exception as e:
+                return (alias, e)
+
+        results: dict[str, str | Exception] = {}
+        with ThreadPoolExecutor(max_workers=len(aliases)) as executor:
+            futures = {executor.submit(call_one, alias): alias for alias in aliases}
+            for future in as_completed(futures):
+                alias, result = future.result()
+                results[alias] = result
+
+        # Return in original order
+        return {alias: results[alias] for alias in aliases}
 
     def _get_provider(self, name: str):
         """Get or create a provider instance (thread-safe)."""

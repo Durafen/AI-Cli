@@ -5,6 +5,8 @@ import platform
 import os
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .aliases import resolve_alias, KNOWN_PROVIDERS
 from .config import Config, load_config
@@ -338,6 +340,41 @@ def dispatch(provider: str, model: str, prompt: str, json_output: bool, yolo: bo
     return provider_instance.call(model, prompt, json_output=json_output, yolo=yolo)
 
 
+def dispatch_multi(aliases: list[str], prompt: str, config: Config, json_output: bool = False) -> None:
+    """Run multiple models in parallel and print labeled results."""
+
+    def call_model(alias: str) -> tuple[str, str, float, str | None]:
+        """Call a single model, return (alias, result, elapsed, error)."""
+        start = time.time()
+        try:
+            provider, model = resolve_alias(alias, config)
+            result = dispatch(provider, model, prompt, json_output)
+            return (alias, result, time.time() - start, None)
+        except Exception as e:
+            return (alias, "", time.time() - start, str(e))
+
+    # Run all models in parallel
+    results: dict[str, tuple[str, float, str | None]] = {}
+    with ThreadPoolExecutor(max_workers=len(aliases)) as executor:
+        futures = {executor.submit(call_model, alias): alias for alias in aliases}
+        for future in as_completed(futures):
+            alias, result, elapsed, error = future.result()
+            results[alias] = (result, elapsed, error)
+
+    # Print results in original order with labels
+    for i, alias in enumerate(aliases):
+        result, elapsed, error = results[alias]
+        # Header with alias and timing
+        print(f"\033[1;36m━━━ {alias} \033[0;90m({elapsed:.1f}s)\033[1;36m ━━━\033[0m")
+        if error:
+            print(f"\033[31mError: {error}\033[0m")
+        else:
+            print(result)
+        # Add spacing between models (but not after last)
+        if i < len(aliases) - 1:
+            print()
+
+
 def main() -> None:
     """Main CLI entry point."""
     argv = sys.argv[1:]
@@ -402,31 +439,60 @@ def main() -> None:
     aliases = config.aliases
     positionals = args.args
 
-    # Determine model and prompt
-    if not positionals:
-        default_alias = config.default_alias
-        if default_alias and not sys.stdin.isatty():
-            model_arg = default_alias
-            prompt = sys.stdin.read().strip()
+    # Consume consecutive leading aliases (for multi-model mode)
+    model_args: list[str] = []
+    prompt_start = 0
+    for i, arg in enumerate(positionals):
+        if arg in aliases or _is_provider_model_format(arg):
+            model_args.append(arg)
+            prompt_start = i + 1
         else:
-            die("model or prompt required")
-    elif positionals[0] in aliases or _is_provider_model_format(positionals[0]):
-        model_arg = positionals[0]
-        if len(positionals) >= 2:
-            prompt = " ".join(positionals[1:])
-        elif not sys.stdin.isatty():
-            prompt = sys.stdin.read().strip()
-        else:
-            die("prompt required (as argument or via stdin)")
+            break
+
+    # Determine prompt from remaining args or stdin
+    if prompt_start < len(positionals):
+        prompt = " ".join(positionals[prompt_start:])
+    elif not sys.stdin.isatty():
+        prompt = sys.stdin.read().strip()
+    elif model_args:
+        die("prompt required (as argument or via stdin)")
     else:
+        prompt = ""
+
+    # Handle no models specified
+    if not model_args:
         default_alias = config.default_alias
         if default_alias:
-            model_arg = default_alias
-            prompt = " ".join(positionals)
+            if positionals:
+                # No alias found, treat all positionals as prompt
+                model_args = [default_alias]
+                prompt = " ".join(positionals)
+            elif prompt:
+                model_args = [default_alias]
+            else:
+                die("model or prompt required")
         else:
-            die(f"unknown model '{positionals[0]}'. Run 'ai list' to see available models.",
-                hint="Set a default with 'ai default <alias>' to use 'ai \"prompt\"' directly.")
+            if positionals:
+                die(f"unknown model '{positionals[0]}'. Run 'ai list' to see available models.",
+                    hint="Set a default with 'ai default <alias>' to use 'ai \"prompt\"' directly.")
+            else:
+                die("model or prompt required")
 
+    # Multi-model mode: run in parallel
+    if len(model_args) > 1:
+        if args.cmd or args.run:
+            die("--cmd and --run not supported with multiple models")
+        if args.yolo:
+            die("--yolo not supported with multiple models")
+        try:
+            dispatch_multi(model_args, prompt, config, args.json)
+        except KeyboardInterrupt:
+            print("\nInterrupted", file=sys.stderr)
+            sys.exit(130)
+        return
+
+    # Single model mode (existing behavior)
+    model_arg = model_args[0]
     try:
         provider, model = resolve_alias(model_arg, config)
     except UnknownAliasError:
