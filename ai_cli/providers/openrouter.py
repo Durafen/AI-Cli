@@ -64,7 +64,7 @@ class OpenRouterProvider(BaseProvider):
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=600) as resp:
                 data = json.loads(resp.read().decode())
 
                 # Validate response structure

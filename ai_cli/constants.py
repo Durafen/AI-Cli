@@ -18,9 +18,9 @@ DEFAULT_ALIASES = {
     "opus": ("claude", "opus"),
     # Codex CLI (OpenAI)
     "codex": ("codex", "gpt-5.2-codex"),
-    "gpt": ("codex", "gpt-5.2-codex"),
-    "gpt-max": ("codex", "gpt-5.1-codex-max"),
-    "gpt-mini": ("codex", "gpt-5.1-codex-mini"),
+    "gpt": ("codex", "gpt-5.2"),
+    "codex-max": ("codex", "gpt-5.1-codex-max"),
+    "codex-mini": ("codex", "gpt-5.1-codex-mini"),
     # Gemini CLI (Google) - short aliases point to newest models
     "gemini": ("gemini", "gemini-3-flash-preview"),
     "pro": ("gemini", "gemini-3-pro-preview"),

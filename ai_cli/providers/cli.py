@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from .base import BaseProvider
 from ..exceptions import ProviderError
 
-# Default timeout for subprocess calls (5 minutes)
-DEFAULT_TIMEOUT = 300
+# Default timeout for subprocess calls (10 minutes)
+DEFAULT_TIMEOUT = 600
 
 
 @dataclass

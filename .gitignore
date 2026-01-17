@@ -37,3 +37,7 @@ Thumbs.db
 # Beads (local issue tracking)
 .beads/
 .gitattributes
+
+# Claude Code
+.claude-code-sandbox
+.claude-code-sandbox-hash

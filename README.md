@@ -218,7 +218,7 @@ Endpoints:
 | Provider | Aliases | Models |
 |----------|---------|--------|
 | **Claude** (Anthropic) | `haiku`, `sonnet`, `opus` | haiku, sonnet, opus |
-| **Codex** (OpenAI) | `gpt`, `gpt-max`, `gpt-mini` | gpt-5.2-codex, gpt-5.1-codex-max, gpt-5.1-codex-mini |
+| **Codex** (OpenAI) | `gpt`, `codex-max`, `codex-mini` | gpt-5.2, gpt-5.1-codex-max, gpt-5.1-codex-mini |
 | **Gemini** (Google) | `pro`, `flash`, `pro-2.5`, `flash-2.5` | gemini-3-pro-preview, gemini-3-flash-preview, gemini-2.5-* |
 | **Qwen** (Alibaba) | `qwen`, `qwen-vision` | coder-model, vision-model |
 | **Ollama** (local) | Auto-generated | Detected via `ollama list` |
@@ -247,9 +247,9 @@ Available models:
     opus
 
   codex: (4)
-    gpt                  -> gpt-5.2-codex
-    gpt-max              -> gpt-5.1-codex-max
-    gpt-mini             -> gpt-5.1-codex-mini
+    gpt                  -> gpt-5.2
+    codex-max            -> gpt-5.1-codex-max
+    codex-mini           -> gpt-5.1-codex-mini
     gpt-5.2
 
   gemini: (5)
