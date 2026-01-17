@@ -33,6 +33,10 @@ DEFAULT_ALIASES = {
     "qwen-vision": ("qwen", "vision-model"),
     # Ollama CLI (local)
     "ollama": ("ollama", "llama3"),
+    # GLM API (Zhipu AI)
+    "glm": ("glm", "glm-4.7"),
+    "glm4": ("glm", "glm-4.7"),
+    "glm-air": ("glm", "glm-4.5-air"),
     # OpenRouter API (FREE models only)
     "mimo": ("openrouter", "xiaomi/mimo-v2-flash:free"),
     "olmo": ("openrouter", "allenai/olmo-3.1-32b-think:free"),

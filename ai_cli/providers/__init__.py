@@ -8,6 +8,7 @@ from .gemini import GeminiProvider
 from .qwen import QwenProvider
 from .ollama import OllamaProvider
 from .openrouter import OpenRouterProvider
+from .glm import GLMProvider
 
 __all__ = [
     "Provider",
@@ -20,6 +21,7 @@ __all__ = [
     "QwenProvider",
     "OllamaProvider",
     "OpenRouterProvider",
+    "GLMProvider",
 ]
 
 # Provider registry for easy lookup by name
@@ -30,6 +32,7 @@ PROVIDERS = {
     "qwen": QwenProvider,
     "ollama": OllamaProvider,
     "openrouter": OpenRouterProvider,
+    "glm": GLMProvider,
 }
 
 

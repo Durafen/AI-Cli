@@ -55,6 +55,11 @@ def run_init() -> None:
             print("Fetching OpenRouter free models...")
             models["openrouter"] = provider_cls.get_free_models()
             print(f"  openrouter free models: {len(models['openrouter'])} found")
+        elif provider_name == "glm":
+            # GLM: use KNOWN_MODELS if provider has API key configured
+            if provider_cls().is_available():
+                models["glm"] = provider_cls.KNOWN_MODELS
+                print(f"  glm models: {', '.join(models['glm'])}")
         elif provider_name in installed:
             # CLI providers: use KNOWN_MODELS if available
             if hasattr(provider_cls, "KNOWN_MODELS"):

@@ -27,6 +27,7 @@ ai <model> "prompt"
 ## Features
 
 - **No API keys** - uses your existing CLI tools (Claude, Gemini, Codex, Qwen, Ollama)
+- **GLM API** - Zhipu AI GLM models via Coding Plan API
 - **One command** for all providers
 - **Multi-model parallel** - `ai opus pro gpt "prompt"` runs all 3 simultaneously
 - **Smart aliases** - `llama-3.3` instead of `meta-llama/llama-3.3-70b-instruct:free`
@@ -56,6 +57,12 @@ For OpenRouter free models (optional):
 ```bash
 echo "OPENROUTER_API_KEY=your-key-here" > .env
 ai init  # re-run to fetch free models
+```
+
+For GLM (Zhipu AI) Coding Plan (optional):
+```bash
+echo "ZHIPU_API_KEY=your-key-here" >> .env
+ai init  # re-run to discover GLM models
 ```
 
 ## Usage
@@ -223,17 +230,26 @@ Endpoints:
 | **Qwen** (Alibaba) | `qwen`, `qwen-vision` | coder-model, vision-model |
 | **Ollama** (local) | Auto-generated | Detected via `ollama list` |
 
+### GLM (Zhipu AI Coding Plan)
+
+| Provider | Aliases | Models |
+|----------|---------|--------|
+| **GLM** (Zhipu AI) | `glm`, `glm4`, `glm-air` | glm-4.7, glm-4.6, glm-4.5-air, glm-4.5-flash |
+
+Requires `ZHIPU_API_KEY` in `.env` or environment.
+
 ### OpenRouter (free models)
 
 31 free models fetched from OpenRouter API. Smart aliases auto-generated:
 
 ```
 ai trinity       # arcee-ai/trinity-mini:free
-ai glm           # z-ai/glm-4.5-air:free
 ai llama-3.3     # meta-llama/llama-3.3-70b-instruct:free
 ai mistral       # mistralai/mistral-7b-instruct:free
 ai deepseek-r1   # deepseek/deepseek-r1-0528:free
 ```
+
+Note: OpenRouter's `glm` alias is overridden by the native GLM provider. Use `openrouter:z-ai/glm-4.5-air:free` to access OpenRouter's GLM models.
 
 ## Example output
 
@@ -257,9 +273,14 @@ Available models:
     flash                -> gemini-3-flash-preview
     ...
 
+  glm: (4)
+    glm                  -> glm-4.7
+    glm4                 -> glm-4.7
+    glm-air              -> glm-4.5-air
+    glm-4.6
+
   openrouter: (31)
     trinity              -> arcee-ai/trinity-mini:free
-    glm                  -> z-ai/glm-4.5-air:free
     llama-3.3            -> meta-llama/llama-3.3-70b-instruct:free
     ...
 
@@ -285,6 +306,7 @@ ai_cli/
 │   ├── claude.py    # Claude CLI
 │   ├── codex.py     # Codex CLI
 │   ├── gemini.py    # Gemini CLI
+│   ├── glm.py       # GLM API (Zhipu AI)
 │   ├── qwen.py      # Qwen CLI
 │   ├── ollama.py    # Ollama CLI
 │   └── openrouter.py # OpenRouter HTTP
