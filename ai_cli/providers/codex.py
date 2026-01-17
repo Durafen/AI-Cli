@@ -12,7 +12,7 @@ class CodexProvider(CLIProvider):
         base_cmd=["codex", "exec"],
         model_args=["--model"],
         json_args=[],  # codex doesn't support json output flag
-        yolo_args=["-s", "danger-full-access", "-a", "never"],
+        yolo_args=["-s", "danger-full-access"],
         prompt_mode="arg",
     )
 
