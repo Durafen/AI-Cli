@@ -469,11 +469,7 @@ def main() -> None:
         default_alias = config.default_alias
         if default_alias:
             if positionals:
-                # Check if first arg looks like a model alias attempt (short, no spaces)
-                first = positionals[0]
-                if len(first) <= 20 and first.replace("-", "").replace("_", "").isalnum():
-                    die(f"unknown model '{first}'. Run 'ai list' to see available models.")
-                # Otherwise treat all positionals as prompt
+                # Treat all positionals as prompt
                 model_args = [default_alias]
                 prompt = " ".join(positionals)
             elif prompt:
