@@ -23,6 +23,16 @@ try:
 except ImportError:
     HAS_TERMIOS = False
 
+# File context constants
+_MAX_FILE_SIZE = 1024 * 1024  # 1 MB per file
+_MAX_TOTAL_SIZE = 5 * 1024 * 1024  # 5 MB total limit
+_BINARY_EXTENSIONS = frozenset({
+    '.pyc', '.so', '.dll', '.exe', '.bin', '.png', '.jpg', '.jpeg',
+    '.gif', '.zip', '.tar', '.gz', '.pdf', '.docx', '.sqlite', '.class', '.jar',
+    '.bmp', '.tiff', '.webp', '.svg', '.ico', '.mp3', '.mp4', '.wav', '.avi',
+    '.mov', '.mkv', '.flac', '.ogg', '.woff', '.woff2', '.ttf', '.eot',
+})
+
 
 def die(msg: str, hint: str | None = None) -> None:
     """Print error message to stderr and exit with code 1."""
@@ -172,7 +182,7 @@ def get_completion_words() -> list[str]:
     config = load_config()
     aliases = list(config.aliases.keys())
     subcommands = ["init", "list", "default", "completions", "serve"]
-    flags = ["--json", "--cmd", "--run", "--yolo", "--no-chat", "--reply", "-j", "-c", "-r", "-y"]
+    flags = ["--json", "--cmd", "--run", "--yolo", "--file", "--no-chat", "--reply", "-j", "-c", "-r", "-y", "-F"]
     return sorted(set(subcommands + aliases + flags))
 
 
@@ -290,6 +300,118 @@ def read_keypress() -> str | None:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
+def _should_skip_file(path: "Path") -> bool:
+    """Skip binary files, large files, and common patterns."""
+    # Check file size
+    try:
+        if path.stat().st_size > _MAX_FILE_SIZE:
+            print(f"[Skipping {path}: file larger than {_MAX_FILE_SIZE // (1024*1024)}MB]", file=sys.stderr)
+            return True
+    except Exception:
+        return True
+
+    # Check extension against known binary types
+    if path.suffix.lower() in _BINARY_EXTENSIONS:
+        return True
+    # Try to detect binary by reading a bit (null byte check)
+    try:
+        with open(path, 'rb') as f:
+            chunk = f.read(1024)
+            if b'\x00' in chunk:
+                return True
+    except Exception:
+        return True
+    return False
+
+
+def _read_file_context(file_refs: list[str]) -> str:
+    """Read file(s) and return formatted context string with headers."""
+    from pathlib import Path
+
+    total_size = 0
+    seen_paths = set()  # Deduplication
+
+    parts = []
+    # Expand comma-separated values
+    all_refs = []
+    for ref in file_refs:
+        all_refs.extend(ref.split(","))
+
+    cwd = Path(os.getcwd()).resolve()
+
+    for ref in all_refs:
+        path = Path(ref).resolve()
+
+        # SECURITY: Prevent path traversal outside CWD
+        try:
+            path.relative_to(cwd)
+        except ValueError:
+            die(f"Path outside current directory: {ref}", hint="Files must be within the current working directory")
+
+        if not path.exists():
+            die(f"File not found: {ref}")
+
+        if path.is_file():
+            if str(path) in seen_paths:
+                continue  # Skip duplicates
+            seen_paths.add(str(path))
+
+            try:
+                file_size = path.stat().st_size
+                if total_size + file_size > _MAX_TOTAL_SIZE:
+                    print(f"[Skipping {path}: total size limit ({_MAX_TOTAL_SIZE // (1024*1024)}MB) exceeded]", file=sys.stderr)
+                    break
+
+                total_size += file_size
+
+                # Use relative path for privacy (don't leak absolute paths to LLM)
+                rel_path = path.relative_to(cwd)
+                # errors='replace' prevents crashes on non-UTF-8 files
+                content = path.read_text(errors='replace')
+                parts.append(f'<file path="{rel_path}">\n{content}\n</file>')
+            except Exception as e:
+                die(f"Error reading file {ref}: {e}")
+        elif path.is_dir():
+            # Read all files in directory (top-level only, not recursive)
+            for file_path in sorted(path.iterdir()):
+                # SECURITY: Skip hidden files/dirs (don't leak .env, .git, etc.)
+                if file_path.name.startswith('.'):
+                    continue
+                if not file_path.is_file():
+                    continue
+
+                # Skip duplicates
+                if str(file_path) in seen_paths:
+                    continue
+                seen_paths.add(str(file_path))
+
+                # Skip binary files, common ignore patterns
+                if _should_skip_file(file_path):
+                    continue
+
+                try:
+                    file_size = file_path.stat().st_size
+                    if total_size + file_size > _MAX_TOTAL_SIZE:
+                        print(f"[Skipping remaining files: total size limit ({_MAX_TOTAL_SIZE // (1024*1024)}MB) exceeded]", file=sys.stderr)
+                        break
+
+                    total_size += file_size
+
+                    # Use relative path for privacy
+                    rel_path = file_path.relative_to(cwd)
+                    # errors='replace' for encoding robustness
+                    content = file_path.read_text(errors='replace')
+                    parts.append(f'<file path="{rel_path}">\n{content}\n</file>')
+                except Exception:
+                    pass  # Skip unreadable files
+            else:
+                continue  # Continue to next ref if no break
+            break  # Break outer loop if inner loop hit total limit
+        else:
+            die(f"Not a file or directory: {ref}")
+
+    return "\n\n".join(parts)
+
 
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
@@ -316,6 +438,7 @@ examples:
     parser.add_argument("--cmd", "-c", action="store_true", help="Shell command only (or use bare: cmd)")
     parser.add_argument("--run", "-r", action="store_true", help="Generate + execute (or use bare: run)")
     parser.add_argument("--yolo", "-y", action="store_true", help="Auto-approve edits (or use bare: yolo)")
+    parser.add_argument("--file", "-F", action="append", default=[], help="Add file/directory contents to context")
     parser.add_argument("--no-chat", action="store_true", help="Skip chat creation for one-off queries")
     parser.add_argument("--reply", action="store_true", help="Reply to most recent chat (or use bare: reply)")
     parser.add_argument("--completions", action="store_true", help=argparse.SUPPRESS)
@@ -635,6 +758,12 @@ def main() -> None:
         die("prompt required (as argument or via stdin)")
     else:
         prompt = ""
+
+    # Add file context before prompt if -F/--file was specified
+    if args.file:
+        file_context = _read_file_context(args.file)
+        if file_context:
+            prompt = f"{file_context}\n\n---\n\n{prompt}"
 
     if not model_args:
         default_alias = config.default_alias

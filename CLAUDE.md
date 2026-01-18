@@ -59,6 +59,11 @@ ai gpt reply "summarize"               # continue last chat with different model
 ai chat list                           # list all chat sessions
 ai chat delete ABC DEF                 # delete chat sessions
 ai --no-chat sonnet "one-off query"    # skip chat creation
+
+# File Context (inject file/directory contents)
+ai sonnet -F main.py "explain this"    # single file
+ai glm -F a.py,b.py -F c.py "review"   # multiple files
+ai opus -F src/ "summarize"            # directory (top-level only)
 ```
 
 ## Library Usage
@@ -112,6 +117,7 @@ ai_cli/
     ├── claude.py        # Claude provider
     ├── codex.py         # Codex provider
     ├── gemini.py        # Gemini provider
+    ├── glm.py           # GLM provider (Zhipu AI)
     ├── qwen.py          # Qwen provider
     ├── ollama.py        # Ollama provider
     └── openrouter.py    # OpenRouter HTTP provider
@@ -184,3 +190,24 @@ Every prompt creates a new chat session automatically. Chats persist conversatio
 **Multi-model mode disables chat** - when comparing models, no chat sessions are created.
 
 **Empty reply:** `ai reply` with no prompt shows the last exchange.
+
+## File Context
+
+The `-F`/`--file` flag injects file/directory contents into the prompt with XML-style headers:
+
+```bash
+ai sonnet -F main.py "explain this"
+ai glm -F a.py,b.py "review these"
+ai opus -F src/ "summarize"
+```
+
+**Format:** `<file path="relative/path">content</file>`
+
+**Features:**
+- Single file: `-F file.txt`
+- Comma-separated: `-F file1.txt,file2.py`
+- Multiple flags: `-F f1 -F f2`
+- Directory: `-F src/` (top-level, non-recursive)
+- Security: path traversal blocked, hidden files skipped in dirs
+- Limits: 1MB per file, 5MB total, duplicates removed
+- Binary skip: auto-detected via extension + null-byte check

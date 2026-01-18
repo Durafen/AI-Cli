@@ -34,6 +34,7 @@ ai <model> "prompt"
 - **Auto-discovery** - `ai init` detects installed tools and fetches available models
 - **Run mode** - `ai run` generates a command, shows it, and executes on confirm
 - **YOLO mode** - `ai yolo` auto-approves file edits across all providers
+- **File context** - `ai -F file.txt` injects file contents into prompts
 - **Free OpenRouter models** - 31 free cloud models when you need them
 - **Stdin support** - `cat code.py | ai sonnet "review this"`
 
@@ -105,6 +106,11 @@ ai init
 # Multi-model (parallel execution)
 ai opus pro gpt "review this code"
 ai sonnet haiku mimo "explain recursion"
+
+# File context (inject file contents into prompt)
+ai sonnet -F main.py "explain this code"
+ai glm -F main.py,config.json "review these files"
+ai opus -F src/ "summarize this directory"
 ```
 
 ### Multi-Model Parallel Execution
