@@ -3,6 +3,7 @@
 import argparse
 import platform
 import os
+import re
 import subprocess
 import sys
 import time
@@ -171,7 +172,7 @@ def get_completion_words() -> list[str]:
     config = load_config()
     aliases = list(config.aliases.keys())
     subcommands = ["init", "list", "default", "completions", "serve"]
-    flags = ["--json", "--cmd", "--run", "--yolo", "-j", "-c", "-r", "-y"]
+    flags = ["--json", "--cmd", "--run", "--yolo", "--no-chat", "--reply", "-j", "-c", "-r", "-y"]
     return sorted(set(subcommands + aliases + flags))
 
 
@@ -289,25 +290,21 @@ def read_keypress() -> str | None:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     epilog = """
 examples:
-  ai sonnet "explain this code"      Basic usage
-  ai "write a haiku"                 Use default model
-  ai json sonnet "return JSON"       JSON output (bare keyword)
-  ai sonnet --json "return JSON"     JSON output (flag)
-  ai cmd "list docker containers"    Get shell command only
-  ai run "stop nginx"                Generate, confirm, execute
-  ai run -y "stop nginx"             Skip confirmation
-  ai yolo sonnet "refactor main.py"  Auto-approve file edits
-  ai serve                           Start HTTP server (port 8765)
-
-subcommands:
-  ai init          Detect tools and fetch models
-  ai list          Show available models
-  ai default       Get/set default model
-  ai completions   Shell completion scripts
+  ai sonnet "explain this"      Start new chat (auto-saves)
+  ai chat ABC "continue"        Continue chat ABC
+  ai reply "continue"           Continue most recent chat
+  ai sonnet reply "switch"      Continue last chat with different model
+  ai chat list                  List all chat sessions
+  ai chat delete ABC            Delete chat session(s)
+  ai json sonnet "return JSON"  JSON output mode
+  ai cmd "list docker"          Shell command only
+  ai run "stop nginx"           Generate + execute
+  ai serve                      Start HTTP server
 """
     parser = argparse.ArgumentParser(
         prog="ai",
@@ -319,6 +316,8 @@ subcommands:
     parser.add_argument("--cmd", "-c", action="store_true", help="Shell command only (or use bare: cmd)")
     parser.add_argument("--run", "-r", action="store_true", help="Generate + execute (or use bare: run)")
     parser.add_argument("--yolo", "-y", action="store_true", help="Auto-approve edits (or use bare: yolo)")
+    parser.add_argument("--no-chat", action="store_true", help="Skip chat creation for one-off queries")
+    parser.add_argument("--reply", action="store_true", help="Reply to most recent chat (or use bare: reply)")
     parser.add_argument("--completions", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("args", nargs="*", metavar="[model] prompt", help="Model alias and/or prompt text")
     return parser
@@ -326,7 +325,7 @@ subcommands:
 
 def normalize_args(argv: list[str]) -> list[str]:
     """Convert legacy bare keywords to flags for backwards compat."""
-    flag_words = {"json": "--json", "cmd": "--cmd", "run": "--run", "yolo": "--yolo"}
+    flag_words = {"json": "--json", "cmd": "--cmd", "run": "--run", "yolo": "--yolo", "reply": "--reply"}
     return [flag_words.get(arg, arg) for arg in argv]
 
 
@@ -336,6 +335,119 @@ def _is_provider_model_format(arg: str) -> bool:
         return False
     provider = arg.split(":", 1)[0]
     return provider in KNOWN_PROVIDERS
+
+
+def detect_chat_mode(argv: list[str], config: Config) -> dict:
+    """
+    Detect and parse chat mode from command line arguments.
+
+    Returns:
+        Dict with keys:
+        - 'mode': 'chat' or None
+        - 'reply_mode': bool
+        - 'subcommand': 'list', 'delete', or None
+        - 'chat_id': 3-char code or None
+        - 'chat_ids': list of 3-char codes (for bulk delete)
+        - 'model': model alias or None
+        - 'remaining_args': args to process after chat extraction
+    """
+    import re
+    result = {
+        'mode': None,
+        'reply_mode': False,
+        'subcommand': None,
+        'chat_id': None,
+        'chat_ids': [],
+        'model': None,
+        'remaining_args': argv.copy()
+    }
+
+    def is_valid_chat_id(s: str) -> bool:
+        return bool(re.fullmatch(r'[A-Za-z0-9]{3}', s))
+
+    def normalize_chat_id(s: str) -> str:
+        return s.upper()
+
+    # 1. Detect 'reply' mode (keyword or flag)
+    reply_idx = None
+    if '--reply' in argv:
+        reply_idx = argv.index('--reply')
+    elif len(argv) > 0 and argv[0] == 'reply':
+        reply_idx = 0
+    elif len(argv) > 1 and argv[1] == 'reply' and (argv[0] in config.aliases or _is_provider_model_format(argv[0])):
+        reply_idx = 1
+
+    if reply_idx is not None:
+        result['reply_mode'] = True
+        before = argv[:reply_idx]
+        after = argv[reply_idx+1:]
+        if before:
+            potential_model = before[-1]
+            if potential_model in config.aliases or _is_provider_model_format(potential_model):
+                result['model'] = potential_model
+                before = before[:-1]
+        result['remaining_args'] = before + after
+        return result
+
+    # 2. Detect 'chat' mode (keyword or flag)
+    chat_idx = None
+    if '--chat' in argv:
+        chat_idx = argv.index('--chat')
+    elif len(argv) > 0 and argv[0] == 'chat':
+        chat_idx = 0
+    elif len(argv) > 1 and argv[1] == 'chat' and (argv[0] in config.aliases or _is_provider_model_format(argv[0])):
+        chat_idx = 1
+
+    if chat_idx is not None:
+        before = argv[:chat_idx]
+        after = argv[chat_idx+1:]
+
+        # Extract model from before
+        if before:
+            potential_model = before[-1]
+            if potential_model in config.aliases or _is_provider_model_format(potential_model):
+                result['model'] = potential_model
+                before = before[:-1]
+
+        if not after:
+            result['mode'] = 'chat'
+            result['remaining_args'] = before
+            return result
+
+        next_arg = after[0]
+        if next_arg == 'list':
+            result['mode'] = 'chat'
+            result['subcommand'] = 'list'
+            result['remaining_args'] = before + after[1:]
+            return result
+        elif next_arg == 'delete':
+            result['mode'] = 'chat'
+            result['subcommand'] = 'delete'
+            chat_ids = []
+            i = 1
+            while i < len(after):
+                potential_id = after[i]
+                if is_valid_chat_id(potential_id):
+                    chat_ids.append(normalize_chat_id(potential_id))
+                    i += 1
+                else:
+                    break
+            result['chat_ids'] = chat_ids
+            if chat_ids:
+                result['chat_id'] = chat_ids[0]
+            result['remaining_args'] = before + after[i:]
+            return result
+        elif is_valid_chat_id(next_arg):
+            result['mode'] = 'chat'
+            result['chat_id'] = normalize_chat_id(next_arg)
+            result['remaining_args'] = before + after[1:]
+            return result
+        elif argv[chat_idx] == '--chat':
+            result['mode'] = 'chat'
+            result['remaining_args'] = before + after
+            return result
+
+    return result
 
 
 def dispatch(provider: str, model: str, prompt: str, json_output: bool, yolo: bool = False) -> str:
@@ -350,15 +462,18 @@ def dispatch_multi(aliases: list[str], prompt: str, config: Config, json_output:
 
     def call_model(alias: str) -> tuple[str, str, float, str | None]:
         """Call a single model, return (alias, result, elapsed, error)."""
+        import time
         start = time.time()
         try:
+            from .aliases import resolve_alias
             provider, model = resolve_alias(alias, config)
             result = dispatch(provider, model, prompt, json_output)
             return (alias, result, time.time() - start, None)
         except Exception as e:
             return (alias, "", time.time() - start, str(e))
 
-    # Run all models in parallel
+    import time
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     results: dict[str, tuple[str, float, str | None]] = {}
     with ThreadPoolExecutor(max_workers=len(aliases)) as executor:
         futures = {executor.submit(call_model, alias): alias for alias in aliases}
@@ -366,16 +481,13 @@ def dispatch_multi(aliases: list[str], prompt: str, config: Config, json_output:
             alias, result, elapsed, error = future.result()
             results[alias] = (result, elapsed, error)
 
-    # Print results in original order with labels
     for i, alias in enumerate(aliases):
         result, elapsed, error = results[alias]
-        # Header with alias and timing
-        print(f"\033[1;36m━━━ {alias} \033[0;90m({elapsed:.1f}s)\033[1;36m ━━━\033[0m")
+        print(f"[1;36m━━━ {alias} [0;90m({elapsed:.1f}s)[1;36m ━━━[0m")
         if error:
-            print(f"\033[31mError: {error}\033[0m")
+            print(f"[31mError: {error}[0m")
         else:
             print(result)
-        # Add spacing between models (but not after last)
         if i < len(aliases) - 1:
             print()
 
@@ -384,13 +496,11 @@ def main() -> None:
     """Main CLI entry point."""
     argv = sys.argv[1:]
 
-    # Handle --completions flag early
     if "--completions" in argv:
         for word in get_completion_words():
             print(word)
         return
 
-    # Handle subcommands before argparse
     if argv:
         if argv[0] == "init":
             run_init()
@@ -406,7 +516,6 @@ def main() -> None:
             return
         if argv[0] == "serve":
             from .server import run_server
-            # Parse serve options: serve [port] [--token TOKEN] [--no-auth]
             port = 8765
             token = None
             no_auth = False
@@ -429,8 +538,75 @@ def main() -> None:
             return
 
     config = load_config()
+    original_argv = argv.copy()
+    chat_info = detect_chat_mode(argv, config)
 
-    # Show help for no args (unless piping stdin with a default set)
+    # Handle empty 'ai reply' - show last exchange or helpful message
+    if chat_info['reply_mode'] and not any(arg not in ["--reply", "--json", "--cmd", "--run", "--yolo", "--no-chat"] for arg in argv):
+        from .chat import ChatManager
+        session = ChatManager.get_latest()
+        if not session:
+            die("No chat sessions to reply to. Start one with 'ai <model> <msg>'")
+        if session.messages:
+            last_msg = session.messages[-1]
+            print(f"Chat: {session.chat_id} (model: {session.model_alias})")
+            print(f"Last {last_msg.role.upper()}: {last_msg.content}")
+        else:
+            print(f"Chat: {session.chat_id} (model: {session.model_alias})")
+            print("No messages yet.")
+        return
+
+    if chat_info['subcommand']:
+        from .chat import ChatManager
+        if chat_info['subcommand'] == 'list':
+            sessions = ChatManager.list_all()
+            if not sessions:
+                print("No chat sessions found.")
+            else:
+                max_id = max(len(s.chat_id) for s in sessions) if sessions else 3
+                max_model = max(len(s.model_alias) for s in sessions) if sessions else 5
+                max_created = 19
+                max_count = max(len(str(len(s.messages))) for s in sessions) if sessions else 1
+                id_width = max(max_id, 2)
+                model_width = max(max_model, 5)
+                created_width = max_created
+                count_width = max(max_count, 12)
+                header = f" {'ID':<{id_width}} | {'Model':<{model_width}} | {'Created':<{created_width}} | {'Message Count':<{count_width}}"
+                print(header)
+                print("-" * len(header))
+                for session in sessions:
+                    msg_count = len(session.messages)
+                    created = session.created_at[:19]
+                    print(f" {session.chat_id:<{id_width}} | {session.model_alias:<{model_width}} | {created:<{created_width}} | {msg_count:>{count_width}}")
+            return
+        elif chat_info['subcommand'] == 'delete':
+            chat_ids = chat_info.get('chat_ids', [])
+            if not chat_ids:
+                die("chat delete requires at least one chat ID", hint="Usage: ai chat delete <CODE> [<CODE> ...]")
+            deleted = []
+            not_found = []
+            for chat_id in chat_ids:
+                if ChatManager.delete(chat_id):
+                    deleted.append(chat_id)
+                else:
+                    not_found.append(chat_id)
+            if deleted:
+                for chat_id in deleted:
+                    print(f"Deleted chat session: {chat_id}")
+            if not_found:
+                for chat_id in not_found:
+                    print(f"Chat session '{chat_id}' not found", file=sys.stderr)
+                sys.exit(1)
+            return
+
+    if (chat_info['chat_id'] or chat_info['reply_mode']) and not chat_info['subcommand']:
+        from .chat import ChatManager
+        if chat_info['chat_id'] and ChatManager.load(chat_info['chat_id']) is None:
+            die(f"Chat session '{chat_info['chat_id']}' not found")
+        argv = ([(chat_info['model'])] if chat_info['model'] else []) + chat_info['remaining_args']
+    elif chat_info['remaining_args'] != original_argv:
+        argv = chat_info['remaining_args']
+
     if not argv:
         if config.default_alias and not sys.stdin.isatty():
             pass
@@ -440,11 +616,8 @@ def main() -> None:
 
     parser = create_parser()
     args = parser.parse_intermixed_args(normalize_args(argv))
-
     aliases = config.aliases
     positionals = args.args
-
-    # Consume consecutive leading aliases (for multi-model mode)
     model_args: list[str] = []
     prompt_start = 0
     for i, arg in enumerate(positionals):
@@ -454,7 +627,6 @@ def main() -> None:
         else:
             break
 
-    # Determine prompt from remaining args or stdin
     if prompt_start < len(positionals):
         prompt = " ".join(positionals[prompt_start:])
     elif not sys.stdin.isatty():
@@ -464,12 +636,10 @@ def main() -> None:
     else:
         prompt = ""
 
-    # Handle no models specified
     if not model_args:
         default_alias = config.default_alias
         if default_alias:
             if positionals:
-                # Treat all positionals as prompt
                 model_args = [default_alias]
                 prompt = " ".join(positionals)
             elif prompt:
@@ -483,75 +653,104 @@ def main() -> None:
             else:
                 die("model or prompt required")
 
-    # Multi-model mode: run in parallel
     if len(model_args) > 1:
         if args.cmd or args.run:
             die("--cmd and --run not supported with multiple models")
         if args.yolo:
             die("--yolo not supported with multiple models")
+        # Chat is disabled in multi-model mode
+        if chat_info['chat_id'] or chat_info['reply_mode']:
+            print("Note: Chat mode is disabled when using multiple models", file=sys.stderr)
         try:
             dispatch_multi(model_args, prompt, config, args.json)
         except KeyboardInterrupt:
-            print("\nInterrupted", file=sys.stderr)
-            sys.exit(130)
+            print("\nInterrupted", file=sys.stderr); sys.exit(130)
         return
 
-    # Single model mode (existing behavior)
     model_arg = model_args[0]
+    model_explicit = bool(chat_info['model'])
+    if not model_explicit and chat_info['remaining_args'] and chat_info['remaining_args'][0] == model_arg:
+        model_explicit = True
+
+    from .chat import ChatManager
+    chat_id = None
+    session = None
+    # Skip chat creation for --no-chat flag or multi-model (already handled)
+    if args.no_chat:
+        session = None
+    elif chat_info['chat_id']:
+        session = ChatManager.load(chat_info['chat_id'])
+        if not model_explicit: model_arg = session.model_alias
+        chat_id = session.chat_id
+    elif chat_info['reply_mode']:
+        session = ChatManager.get_latest()
+        if not session:
+            die("No chat sessions to reply to. Start one with 'ai <model> <msg>'")
+        if not model_explicit: model_arg = session.model_alias
+        chat_id = session.chat_id
+    else:
+        # Always create chat for normal prompts
+        session = ChatManager.create(model_arg)
+        chat_id = session.chat_id
+
     try:
+        from .aliases import resolve_alias
         provider, model = resolve_alias(model_arg, config)
     except UnknownAliasError:
         die(f"unknown model '{model_arg}'. Run 'ai list' to see available models.")
 
-    # Wrap prompt for cmd/run mode
+    if session:
+        session.enforce_limit()
+        original_prompt = prompt
+        history = session.format_history()
+        if history: prompt = f"{history}\n\nUSER: {prompt}"
+        else: prompt = f"USER: {prompt}"
+
     if args.cmd or args.run:
+        import platform
         os_name = platform.system()
         shell = os.path.basename(os.environ.get("SHELL", "sh"))
-        prompt = (
-            f"[SYSTEM: OS={os_name}, Shell={shell}. OUTPUT MODE: Your entire response "
-            "will be piped directly to /bin/sh for execution. Return ONLY a single "
-            "shell command. Any text that is not a valid command will cause an error. "
-            f"No prose, no markdown, no explanation.]\n\n{prompt}"
-        )
+        prompt = (f"[SYSTEM: OS={os_name}, Shell={shell}. OUTPUT MODE: Your entire response "
+                  "will be piped directly to /bin/sh for execution. Return ONLY a single "
+                  "shell command. Any text that is not a valid command will cause an error. "
+                  f"No prose, no markdown, no explanation.]\n\n{prompt}")
 
     try:
         result = dispatch(provider, model, prompt, args.json, args.yolo if not args.run else False)
+        if session:
+            session.add_message("user", original_prompt)
+            session.add_message("assistant", result)
+            session.model_alias = model_arg
+            session.save()
         if args.cmd or args.run:
             result = sanitize_command(result)
-
+        footer = ""
+        if chat_id:
+            # Footer to stderr for pipes, cmd mode, or json mode
+            if args.json or args.cmd or not sys.stdout.isatty():
+                print(f"[Chat: {chat_id}]", file=sys.stderr)
+            else:
+                footer = f"\n\n[Chat: {chat_id}]"
         if args.run:
-            print(f"\033[90m$ \033[0m\033[1m{result}\033[0m")
+            print(f"[90m$ [0m[1m{result}[0m{footer}")
             if not args.yolo:
                 try:
-                    print("\033[90m[Enter/Space] run, [Esc/n] cancel: \033[0m", end="", flush=True)
-                    key = read_keypress()
-                    print()
+                    print("[90m[Enter/Space] run, [Esc/n] cancel: [0m", end="", flush=True)
+                    key = read_keypress(); print()
                     if key is None:
                         response = input().strip().lower()
-                        if response in ("n", "no"):
-                            print("Cancelled.")
-                            return
-                    elif key in ('esc', 'n', 'N', '\x03'):
-                        print("Cancelled.")
-                        return
-                    elif key not in ('\r', '\n', ' ', 'y', 'Y'):
-                        print("Cancelled.")
-                        return
-                except (KeyboardInterrupt, EOFError):
-                    print("\nCancelled.")
-                    return
+                        if response in ("n", "no"): print("Cancelled."); return
+                    elif key in ('esc', 'n', 'N', '\x03'): print("Cancelled."); return
+                    elif key not in ('\r', '\n', ' ', 'y', 'Y'): print("Cancelled."); return
+                except (KeyboardInterrupt, EOFError): print("\nCancelled."); return
+            import subprocess
             exec_result = subprocess.run(result, shell=True)
             sys.exit(exec_result.returncode)
         else:
-            print(result)
-    except AIError as e:
-        die(e.message, e.hint)
-    except RuntimeError as e:
-        die(str(e))
-    except KeyboardInterrupt:
-        print("\nInterrupted", file=sys.stderr)
-        sys.exit(130)
-
+            print(f"{result}{footer}")
+    except AIError as e: die(e.message, e.hint)
+    except RuntimeError as e: die(str(e))
+    except KeyboardInterrupt: print("\nInterrupted", file=sys.stderr); sys.exit(130)
 
 if __name__ == "__main__":
     main()

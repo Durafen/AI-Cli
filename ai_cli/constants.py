@@ -7,7 +7,7 @@ CONFIG_DIR = Path.home() / ".ai-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Reserved command names (cannot be used as aliases)
-RESERVED_COMMANDS = {"init", "list", "default", "cmd", "json", "help", "yolo", "run", "completions", "serve"}
+RESERVED_COMMANDS = {"init", "list", "default", "cmd", "json", "help", "yolo", "run", "completions", "serve", "chat", "reply"}
 
 # Default aliases: alias -> (provider, model)
 DEFAULT_ALIASES = {

@@ -50,6 +50,15 @@ cat file.txt | ai <alias>
 ai opus pro gpt "review this code"     # runs all 3 in parallel
 ai sonnet haiku "explain X"            # compare responses
 echo "prompt" | ai opus pro gpt        # stdin works too
+
+# Chat Mode (persistent conversations)
+ai sonnet "explain decorators"         # starts new chat, shows [Chat: ABC]
+ai chat ABC "give examples"            # continues chat ABC
+ai reply "and for classes?"            # continues most recent chat
+ai gpt reply "summarize"               # continue last chat with different model
+ai chat list                           # list all chat sessions
+ai chat delete ABC DEF                 # delete chat sessions
+ai --no-chat sonnet "one-off query"    # skip chat creation
 ```
 
 ## Library Usage
@@ -91,6 +100,7 @@ ai_cli/
 ├── client.py            # AIClient class - main library interface
 ├── config.py            # Config class (load/save, no globals)
 ├── aliases.py           # Alias resolution logic
+├── chat.py              # Chat session management (persistent conversations)
 ├── constants.py         # RESERVED_COMMANDS, DEFAULT_ALIASES
 ├── exceptions.py        # AIError, UnknownAliasError, ProviderError
 ├── cli.py               # CLI entry point (main)
@@ -151,3 +161,26 @@ Endpoints:
 - `GET /models` - List available models
 - `GET /providers` - List providers
 - `POST /call` - Execute prompt `{"alias": "sonnet", "prompt": "..."}`
+
+## Chat Mode
+
+Every prompt creates a new chat session automatically. Chats persist conversation history for context.
+
+**Behavior:**
+- `ai <model> "prompt"` → Creates new chat, shows `[Chat: XXX]` footer
+- `ai reply "prompt"` → Continues most recent chat
+- `ai chat <CODE> "prompt"` → Continues specific chat (error if not found)
+- `ai <model> reply "prompt"` → Continue with different model
+- `ai --no-chat <model> "prompt"` → Skip chat creation
+- `ai chat list` → List all sessions (ID, model, created date, message count)
+- `ai chat delete <CODE> [...]` → Delete session(s)
+
+**Chat storage:**
+- Location: `~/.ai-cli/chats/*.json`
+- ID format: 3-character alphanumeric (e.g., `ABC`, `X7Y`)
+- History limit: 4000 chars or 10 messages (sliding window)
+- Footer goes to stderr for pipes (prevents breaking `eval $(ai cmd "...")`)
+
+**Multi-model mode disables chat** - when comparing models, no chat sessions are created.
+
+**Empty reply:** `ai reply` with no prompt shows the last exchange.
