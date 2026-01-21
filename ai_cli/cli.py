@@ -580,7 +580,7 @@ def dispatch(provider: str, model: str, prompt: str, json_output: bool, yolo: bo
     return provider_instance.call(model, prompt, json_output=json_output, yolo=yolo)
 
 
-def dispatch_multi(aliases: list[str], prompt: str, config: Config, json_output: bool = False) -> None:
+def dispatch_multi(aliases: list[str], prompt: str, config: Config, json_output: bool = False, yolo: bool = False) -> None:
     """Run multiple models in parallel and print labeled results."""
 
     def call_model(alias: str) -> tuple[str, str, float, str | None]:
@@ -590,7 +590,7 @@ def dispatch_multi(aliases: list[str], prompt: str, config: Config, json_output:
         try:
             from .aliases import resolve_alias
             provider, model = resolve_alias(alias, config)
-            result = dispatch(provider, model, prompt, json_output)
+            result = dispatch(provider, model, prompt, json_output, yolo=yolo)
             return (alias, result, time.time() - start, None)
         except Exception as e:
             return (alias, "", time.time() - start, str(e))
@@ -785,13 +785,11 @@ def main() -> None:
     if len(model_args) > 1:
         if args.cmd or args.run:
             die("--cmd and --run not supported with multiple models")
-        if args.yolo:
-            die("--yolo not supported with multiple models")
         # Chat is disabled in multi-model mode
         if chat_info['chat_id'] or chat_info['reply_mode']:
             print("Note: Chat mode is disabled when using multiple models", file=sys.stderr)
         try:
-            dispatch_multi(model_args, prompt, config, args.json)
+            dispatch_multi(model_args, prompt, config, args.json, yolo=args.yolo)
         except KeyboardInterrupt:
             print("\nInterrupted", file=sys.stderr); sys.exit(130)
         return
