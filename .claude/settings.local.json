@@ -12,7 +12,9 @@
       "Bash(ai pro \"Review the full diff of branch ''python'' vs ''master'' in this repo. Run: git diff master..HEAD to see all changes. Analyze code quality, bugs, security issues, and architecture. Be critical and specific. List issues by severity.\")",
       "Bash(ai gpt \"Review the full diff of branch ''python'' vs ''master'' in this repo. Run: git diff master..HEAD to see all changes. Analyze code quality, bugs, security issues, and architecture. Be critical and specific. List issues by severity.\")",
       "mcp__plugin_context7_context7__resolve-library-id",
-      "WebFetch(domain:artificialanalysis.ai)"
+      "WebFetch(domain:artificialanalysis.ai)",
+      "WebFetch(domain:chatgpt.com)",
+      "WebFetch(domain:docs.z.ai)"
     ]
   },
   "outputStyle": "fact-verification"

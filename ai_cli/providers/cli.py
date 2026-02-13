@@ -55,15 +55,19 @@ class CLIProvider(BaseProvider):
         cmd = self._build_command(model, prompt, json_output, yolo)
         call_timeout = timeout or self.config.timeout or DEFAULT_TIMEOUT
 
+        # Strip CLAUDECODE env var to allow nested claude CLI calls
+        import os
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
         try:
             if self.config.prompt_mode == "stdin":
                 result = subprocess.run(
-                    cmd, input=prompt, capture_output=True, text=True, timeout=call_timeout
+                    cmd, input=prompt, capture_output=True, text=True, timeout=call_timeout, env=env
                 )
             else:
                 cmd.append(prompt)
                 result = subprocess.run(
-                    cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=call_timeout
+                    cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=call_timeout, env=env
                 )
         except subprocess.TimeoutExpired:
             raise ProviderError(self.name, f"Command timed out after {call_timeout}s")

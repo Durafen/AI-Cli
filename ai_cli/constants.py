@@ -16,8 +16,13 @@ DEFAULT_ALIASES = {
     "haiku": ("claude", "haiku"),
     "sonnet": ("claude", "sonnet"),
     "opus": ("claude", "opus"),
+    "opus-m": ("claude", "opus@medium"),
+    "opus-h": ("claude", "opus@high"),
     # Codex CLI (OpenAI)
-    "codex": ("codex", "gpt-5.2-codex"),
+    "codex": ("codex", "gpt-5.3-codex"),
+    "codex-m": ("codex", "gpt-5.3-codex@medium"),
+    "codex-h": ("codex", "gpt-5.3-codex@high"),
+    "codex-xh": ("codex", "gpt-5.3-codex@xhigh"),
     "gpt": ("codex", "gpt-5.2"),
     "codex-max": ("codex", "gpt-5.1-codex-max"),
     "codex-mini": ("codex", "gpt-5.1-codex-mini"),
@@ -34,7 +39,8 @@ DEFAULT_ALIASES = {
     # Ollama CLI (local)
     "ollama": ("ollama", "llama3"),
     # GLM API (Zhipu AI)
-    "glm": ("glm", "glm-4.7"),
+    "glm": ("glm", "glm-5"),
+    "glm5": ("glm", "glm-5"),
     "glm4": ("glm", "glm-4.7"),
     "glm-air": ("glm", "glm-4.5-air"),
     # OpenRouter API (FREE models only)

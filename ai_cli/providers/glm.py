@@ -17,6 +17,7 @@ class GLMProvider(BaseProvider):
 
     # Known models supported by GLM API
     KNOWN_MODELS = [
+        "glm-5",
         "glm-4.7",
         "glm-4.6",
         "glm-4.5",

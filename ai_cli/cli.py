@@ -120,6 +120,9 @@ def show_list() -> None:
 
     print("Available models:")
 
+    # Track which aliases are displayed via the model list
+    displayed_aliases = set()
+
     for provider, model_list in sorted(models.items()):
         if model_list:
             print(f"\n  {provider}: ({len(model_list)})")
@@ -127,8 +130,16 @@ def show_list() -> None:
                 alias = model_to_alias.get((provider, model))
                 if alias and alias != model:
                     print(f"    {alias:20} -> {model}")
+                    displayed_aliases.add(alias)
                 else:
                     print(f"    {model}")
+
+            # Show aliases with options (e.g. @effort) not covered by KNOWN_MODELS
+            for alias, (prov, model) in sorted(aliases.items()):
+                if prov == provider and alias not in displayed_aliases and "@" in model:
+                    base_model, option = model.rsplit("@", 1)
+                    print(f"    {alias:20} -> {base_model} ({option})")
+                    displayed_aliases.add(alias)
 
     installed = config.installed_tools
     if installed:
