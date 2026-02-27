@@ -13,7 +13,7 @@ class ClaudeProvider(CLIProvider):
         model_args=["--model"],
         json_args=["--output-format", "json"],
         yolo_args=["--dangerously-skip-permissions"],
-        prompt_mode="stdin",
+        prompt_mode="arg",
     )
 
     # Known models for this provider

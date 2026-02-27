@@ -5,10 +5,8 @@ import subprocess
 from dataclasses import dataclass
 
 from .base import BaseProvider
+from ..constants import EXECUTION_TIMEOUT
 from ..exceptions import ProviderError
-
-# Default timeout for subprocess calls (10 minutes)
-DEFAULT_TIMEOUT = 600
 
 
 @dataclass
@@ -53,7 +51,7 @@ class CLIProvider(BaseProvider):
             )
 
         cmd = self._build_command(model, prompt, json_output, yolo)
-        call_timeout = timeout or self.config.timeout or DEFAULT_TIMEOUT
+        call_timeout = timeout or self.config.timeout or EXECUTION_TIMEOUT
 
         # Strip CLAUDECODE env var to allow nested claude CLI calls
         import os

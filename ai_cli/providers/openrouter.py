@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 
 from .base import BaseProvider
+from ..constants import EXECUTION_TIMEOUT
 from ..exceptions import ProviderError
 
 
@@ -64,7 +65,7 @@ class OpenRouterProvider(BaseProvider):
         )
 
         try:
-            with urllib.request.urlopen(req, timeout=600) as resp:
+            with urllib.request.urlopen(req, timeout=EXECUTION_TIMEOUT) as resp:
                 data = json.loads(resp.read().decode())
 
                 # Validate response structure

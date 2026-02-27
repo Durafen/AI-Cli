@@ -2,6 +2,9 @@
 
 from pathlib import Path
 
+# Timeout for prompt execution across all providers (20 minutes)
+EXECUTION_TIMEOUT = 1200
+
 # Config file location
 CONFIG_DIR = Path.home() / ".ai-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -28,7 +31,7 @@ DEFAULT_ALIASES = {
     "codex-mini": ("codex", "gpt-5.1-codex-mini"),
     # Gemini CLI (Google) - short aliases point to newest models
     "gemini": ("gemini", "gemini-3-flash-preview"),
-    "pro": ("gemini", "gemini-3-pro-preview"),
+    "pro": ("gemini", "gemini-3.1-pro-preview"),
     "flash": ("gemini", "gemini-3-flash-preview"),
     "pro-2.5": ("gemini", "gemini-2.5-pro"),
     "flash-2.5": ("gemini", "gemini-2.5-flash"),
