@@ -26,7 +26,8 @@ DEFAULT_ALIASES = {
     "codex-m": ("codex", "gpt-5.3-codex@medium"),
     "codex-h": ("codex", "gpt-5.3-codex@high"),
     "codex-xh": ("codex", "gpt-5.3-codex@xhigh"),
-    "gpt": ("codex", "gpt-5.2"),
+    "gpt": ("codex", "gpt-5.5"),
+    "gpt-xh": ("codex", "gpt-5.5@xhigh"),
     "codex-max": ("codex", "gpt-5.1-codex-max"),
     "codex-mini": ("codex", "gpt-5.1-codex-mini"),
     # Gemini CLI (Google) - short aliases point to newest models

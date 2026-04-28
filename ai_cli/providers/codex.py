@@ -18,7 +18,7 @@ class CodexProvider(CLIProvider):
         extra_args=["--skip-git-repo-check"],  # always: bypass trust check
     )
 
-    KNOWN_MODELS = ["gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini", "gpt-5.2"]
+    KNOWN_MODELS = ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini", "gpt-5.2"]
 
     def _build_command(self, model: str, prompt: str, json_output: bool, yolo: bool) -> list[str]:
         """Build command, extracting @effort suffix if present."""
