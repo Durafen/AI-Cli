@@ -71,8 +71,15 @@ class Config:
 
     def detect_cli_tools(self) -> list[str]:
         """Detect which CLI tools are installed."""
-        tools = ["codex", "claude", "gemini", "qwen", "ollama"]
-        self.installed_tools = [tool for tool in tools if shutil.which(tool)]
+        # Map provider name -> actual CLI binary (gemini provider uses 'agy')
+        tools = {
+            "codex": "codex",
+            "claude": "claude",
+            "gemini": "agy",
+            "qwen": "qwen",
+            "ollama": "ollama",
+        }
+        self.installed_tools = [name for name, binary in tools.items() if shutil.which(binary)]
         return self.installed_tools
 
     def set_default(self, alias: str | None) -> None:

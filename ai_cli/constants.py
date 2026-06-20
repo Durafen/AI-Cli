@@ -30,13 +30,13 @@ DEFAULT_ALIASES = {
     "gpt-xh": ("codex", "gpt-5.5@xhigh"),
     "codex-max": ("codex", "gpt-5.1-codex-max"),
     "codex-mini": ("codex", "gpt-5.1-codex-mini"),
-    # Gemini CLI (Google) - short aliases point to newest models
-    "gemini": ("gemini", "gemini-3-flash-preview"),
-    "pro": ("gemini", "gemini-3.1-pro-preview"),
-    "flash": ("gemini", "gemini-3-flash-preview"),
-    "pro-2.5": ("gemini", "gemini-2.5-pro"),
-    "flash-2.5": ("gemini", "gemini-2.5-flash"),
-    "flash-lite": ("gemini", "gemini-2.5-flash-lite"),
+    # Gemini via the 'agy' CLI - short aliases default to max-quality (High)
+    "gemini": ("gemini", "Gemini 3.5 Flash (High)"),
+    "pro": ("gemini", "Gemini 3.1 Pro (High)"),
+    "flash": ("gemini", "Gemini 3.5 Flash (High)"),
+    "pro-low": ("gemini", "Gemini 3.1 Pro (Low)"),
+    "flash-med": ("gemini", "Gemini 3.5 Flash (Medium)"),
+    "flash-low": ("gemini", "Gemini 3.5 Flash (Low)"),
     # Qwen CLI (Alibaba)
     "qwen": ("qwen", "coder-model"),
     "qwen-vision": ("qwen", "vision-model"),

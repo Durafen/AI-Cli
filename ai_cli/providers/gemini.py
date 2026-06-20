@@ -7,23 +7,22 @@ class GeminiProvider(CLIProvider):
     """Provider for Gemini CLI (Google)."""
 
     name = "gemini"
-    cli_name = "gemini"
+    cli_name = "agy"  # Gemini CLI is now the multi-model 'agy' binary
     config = CLIConfig(
-        base_cmd=["gemini"],
+        base_cmd=["agy"],
         model_args=["--model"],
-        json_args=["--output-format", "json"],
-        yolo_args=["--yolo"],
+        json_args=[],  # agy has no JSON output mode
+        yolo_args=["--dangerously-skip-permissions"],
         prompt_mode="arg",
-        default_args=[
-            "--allowed-tools", "run_shell_command", "read_file",
-            "list_directory", "search_file_content", "glob",
-        ],
+        extra_args=["--print"],  # non-interactive single-prompt mode; prompt is appended after
     )
 
+    # agy --model expects these exact display strings (it silently falls back
+    # to a default on an unrecognized model, so the names must match precisely).
     KNOWN_MODELS = [
-        "gemini-3.1-pro-preview",
-        "gemini-3-flash-preview",
-        "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
+        "Gemini 3.1 Pro (High)",
+        "Gemini 3.1 Pro (Low)",
+        "Gemini 3.5 Flash (High)",
+        "Gemini 3.5 Flash (Medium)",
+        "Gemini 3.5 Flash (Low)",
     ]
